@@ -25,7 +25,8 @@ class Settings(BaseSettings):
     microsoft_client_secret: str = ""
 
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.8-flash"
+    gemini_fallback_model: str = ""   # optional second model to try if the first is busy
     ai_daily_limit: int = 20          # per browser session per day
     ai_global_daily_limit: int = 300  # whole site per day (protects the free quota)
 

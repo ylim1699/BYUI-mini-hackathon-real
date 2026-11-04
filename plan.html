@@ -128,7 +128,7 @@
 <tr><td>Validation</td><td>zod / Pydantic</td><td></td></tr>
 <tr><td>Auth + database</td><td>Supabase (anonymous sign-in per browser, no account; Postgres with row-level security)</td><td></td></tr>
 <tr><td>Backend</td><td>FastAPI (Python)</td><td>Canvas, Google Calendar, Gemini; holds all secrets</td></tr>
-<tr><td>AI</td><td>Gemini API free tier (<code>gemini-2.5-flash</code>, set by env)</td><td>Summary and syllabus parsing; JSON-schema output</td></tr>
+<tr><td>AI</td><td>Gemini API free tier (<code>gemini-3.8-flash</code>, set by env)</td><td>Summary and syllabus parsing; JSON-schema output</td></tr>
 <tr><td>Hosting</td><td>Vercel, one project with Services: <code>frontend/</code> at <code>/</code>, <code>backend/</code> at <code>/api</code></td><td>Local dev: Vite on 5173 proxies <code>/api</code> to uvicorn on 8000</td></tr>
 <tr><td>Tests</td><td>Vitest (frontend), pytest (backend)</td><td></td></tr>
 </table></div>

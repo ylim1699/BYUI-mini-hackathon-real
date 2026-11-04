@@ -1,4 +1,6 @@
 """Gemini calls with JSON-schema output. Only titles, dates, and syllabus text are sent."""
+import asyncio
+import logging
 from datetime import date
 
 from pydantic import BaseModel
@@ -7,6 +9,8 @@ from . import db
 from .config import get_settings
 from .errors import AppError
 from .schemas import ParsedSyllabus, Summary, SummaryIn
+
+log = logging.getLogger("uvicorn.error")
 
 
 async def check_quota(user_id: str) -> None:
@@ -27,20 +31,41 @@ async def _generate(prompt: str, schema: type[BaseModel]) -> BaseModel:
     from google.genai import types
 
     client = genai.Client(api_key=s.gemini_api_key)
-    try:
-        resp = await client.aio.models.generate_content(
-            model=s.gemini_model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=schema,
-                temperature=0.2,
-            ),
-        )
-    except Exception as e:  # network, quota, safety
+    models = [m for m in (s.gemini_model, s.gemini_fallback_model) if m]
+    last: Exception | None = None
+    resp = None
+    # Busy (503) or rate-limited (429): wait and retry, then try the fallback model if one is set.
+    for model in models:
+        for wait in (0, 2, 5):
+            if wait:
+                await asyncio.sleep(wait)
+            try:
+                resp = await client.aio.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=schema,
+                        temperature=0.2,
+                    ),
+                )
+                break
+            except Exception as e:  # network, quota, safety
+                last = e
+                log.error("Gemini call failed (%s): %s", model, e)
+                if not any(code in str(e) for code in ("503", "UNAVAILABLE", "500", "INTERNAL")):
+                    break
+        if resp is not None:
+            break
+    if resp is None:
+        e = last or RuntimeError("no response")
         msg = str(e)
+        if "503" in msg or "UNAVAILABLE" in msg:
+            raise AppError(503, "The AI is busy right now. Try again in a minute.", "ai_busy")
         if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
             raise AppError(429, "The free AI quota is used up for now. Try again later.", "ai_quota")
+        if "API key" in msg or "API_KEY" in msg or "401" in msg or "403" in msg or "PERMISSION_DENIED" in msg:
+            raise AppError(502, "The AI key wasn't accepted. Check GEMINI_API_KEY on the server.", "ai_key")
         raise AppError(502, "The AI service didn't respond. Try again.", "ai")
     if resp.parsed is not None:
         return resp.parsed  # type: ignore[return-value]

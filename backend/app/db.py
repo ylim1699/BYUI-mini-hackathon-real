@@ -2,6 +2,7 @@
 
 The service key bypasses row-level security, so EVERY query here must filter by user_id.
 """
+import logging
 from typing import Any
 
 import httpx
@@ -28,6 +29,7 @@ def _url(path: str) -> str:
 
 def _check(r: httpx.Response) -> Any:
     if r.status_code >= 400:
+        logging.getLogger("uvicorn.error").error("Supabase %s %s -> %s: %s", r.request.method, r.request.url.path, r.status_code, r.text[:300])
         raise AppError(502, "Database request failed. Try again in a moment.", "db")
     return r.json() if r.content else None
 
