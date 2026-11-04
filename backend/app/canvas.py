@@ -3,6 +3,7 @@ import re
 from datetime import date, datetime, time, timezone
 from typing import Any
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 import httpx
 from icalendar import Calendar
@@ -10,6 +11,7 @@ from icalendar import Calendar
 from .errors import AppError
 
 ALLOWED_HOST_SUFFIX = ".instructure.com"
+SCHOOL_TZ = ZoneInfo("America/Denver")  # BYU-Idaho is on Mountain time; all-day due dates mean 11:59 PM there
 
 
 def safe_canvas_url(url: str) -> str:
@@ -30,7 +32,7 @@ def guess_type(title: str, submission_types: list[str] | None = None) -> str:
         return "exam"
     if re.search(r"\b(project|checkpoint|milestone)\b", t):
         return "project"
-    if re.search(r"\b(read|reading|chapter)\b", t):
+    if re.search(r"\b(read|reading|chapter|prepare|sections?)\b", t):
         return "reading"
     if "none" in subs or "not_graded" in subs:
         return "other"
@@ -147,7 +149,7 @@ def parse_ics(text: str) -> list[dict[str, Any]]:
         title = _BRACKET.sub("", summary)
         start = dt.dt
         if isinstance(start, date) and not isinstance(start, datetime):
-            start = datetime.combine(start, time(23, 59), tzinfo=timezone.utc)
+            start = datetime.combine(start, time(23, 59), tzinfo=SCHOOL_TZ)
         elif start.tzinfo is None:
             start = start.replace(tzinfo=timezone.utc)
         code = short_code(course_label)

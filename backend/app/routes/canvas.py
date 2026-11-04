@@ -54,7 +54,10 @@ async def import_canvas(user: User = Depends(current_user)) -> ImportResult:
         (r["course_id"], r["canvas_id"])
         for r in await db.select("items", {"user_id": f"eq.{user.id}", "edited": "eq.true", "select": "course_id,canvas_id"})
     }
-    rows_ = await db.select("courses", {"user_id": f"eq.{user.id}", "select": "id,canvas_id,deleted_at"})
+    try:
+        rows_ = await db.select("courses", {"user_id": f"eq.{user.id}", "select": "id,canvas_id,deleted_at"})
+    except AppError:  # database without migration 003 (no deleted_at yet)
+        rows_ = await db.select("courses", {"user_id": f"eq.{user.id}", "select": "id,canvas_id"})
     existing = {r["canvas_id"]: r["id"] for r in rows_}
     deleted = {r["canvas_id"] for r in rows_ if r.get("deleted_at")}  # classes you deleted stay deleted
     n_items = 0
@@ -78,10 +81,13 @@ async def import_canvas(user: User = Depends(current_user)) -> ImportResult:
                 "user_id,canvas_id",
             )
             course_id = saved[0]["id"]
-        rows: list[dict[str, Any]] = [
-            {**it, "user_id": user.id, "course_id": course_id} for it in c["items"]
-            if (course_id, it["canvas_id"]) not in edited
-        ]
+        seen: set[str] = set()  # Canvas sometimes lists the same event twice; save it once
+        rows: list[dict[str, Any]] = []
+        for it in c["items"]:
+            if (course_id, it["canvas_id"]) in edited or it["canvas_id"] in seen:
+                continue
+            seen.add(it["canvas_id"])
+            rows.append({**it, "user_id": user.id, "course_id": course_id})
         if rows:
             await db.upsert("items", rows, "user_id,course_id,canvas_id")
             n_items += len(rows)
