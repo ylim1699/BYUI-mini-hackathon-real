@@ -28,3 +28,4 @@ Thumbs.db
 
 # Your own syllabus PDFs in the project root (kept out of git)
 /*.pdf
+*.tsbuildinfo
