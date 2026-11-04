@@ -59,12 +59,13 @@ async def import_canvas(user: User = Depends(current_user)) -> ImportResult:
     except AppError:  # database without migration 003 (no deleted_at yet)
         rows_ = await db.select("courses", {"user_id": f"eq.{user.id}", "select": "id,canvas_id"})
     existing = {r["canvas_id"]: r["id"] for r in rows_}
-    deleted = {r["canvas_id"] for r in rows_ if r.get("deleted_at")}  # classes you deleted stay deleted
+    deleted = {r["canvas_id"] for r in rows_ if r.get("deleted_at")}
     n_items = 0
     for i, c in enumerate(courses):
-        if c["canvas_id"] in deleted:
-            continue
         course_id = existing.get(c["canvas_id"])
+        if c["canvas_id"] in deleted and course_id:
+            # Importing again is a clear ask for the class: bring back one you deleted.
+            await db.update("courses", {"id": f"eq.{course_id}", "user_id": f"eq.{user.id}"}, {"deleted_at": None})
         if not course_id:
             saved = await db.upsert(
                 "courses",
