@@ -4,7 +4,7 @@ import type { BlockLink, Course, Item, StudyTime, SyllabusFile } from "../../typ
 
 const course = (c: Partial<Course> & Pick<Course, "id" | "code" | "name" | "color">): Course => ({
   canvas_id: null, credits: 3, hours_per_week: 7.5, online: true, meetings: [], confirmed: true, source: "syllabus",
-  notes: null, late_policy: null, source_lines: [], file_name: null, renamed: false, ...c,
+  notes: null, late_policy: null, source_lines: [], file_name: null, renamed: false, deleted_at: null, ...c,
 });
 
 export const mockCourses: Course[] = [

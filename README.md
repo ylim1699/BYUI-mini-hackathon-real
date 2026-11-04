@@ -11,7 +11,7 @@ Turns syllabi and Canvas into one plan: due dates, weekly study time per class, 
 
 ## 1. Supabase (database)
 1. Create a free project at https://supabase.com.
-2. **SQL Editor → New query.** Paste `supabase/migrations/001_init.sql` and run it. Then do the same with `002_no_login_outlook_review.sql`.
+2. **SQL Editor → New query.** Paste `supabase/migrations/001_init.sql` and run it. Then do the same with `002_no_login_outlook_review.sql`, then `003_delete_classes.sql`.
 3. **Authentication → Sign In / Providers.** Turn on **Allow anonymous sign-ins** and save.
 4. Optional but recommended: **Authentication → Attack Protection.** Turn on CAPTCHA, or keep the default rate limit (anonymous sign-ins are limited per IP).
 5. **Project Settings → API Keys.** Copy:

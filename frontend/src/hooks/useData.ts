@@ -14,7 +14,10 @@ export const qk = {
 };
 
 export const useMe = () => useQuery({ queryKey: qk.me, queryFn: () => api("/me", meSchema) });
-export const useCourses = () => useQuery({ queryKey: qk.courses, queryFn: db.listCourses });
+/** Classes you haven't deleted. */
+export const useCourses = () => useQuery({ queryKey: qk.courses, queryFn: db.listCourses, select: (cs: Course[]) => cs.filter((c) => !c.deleted_at) });
+/** Every class, including ones in Recently deleted. */
+export const useAllCourses = () => useQuery({ queryKey: qk.courses, queryFn: db.listCourses });
 export const useItems = () => useQuery({ queryKey: qk.items, queryFn: db.listItems });
 export const useStudyTimes = () => useQuery({ queryKey: qk.study, queryFn: db.listStudyTimes });
 export const useLinks = () => useQuery({ queryKey: qk.links, queryFn: db.listLinks });

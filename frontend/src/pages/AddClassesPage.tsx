@@ -2,7 +2,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useState, type DragEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { Confirm, ErrorNote, Ico, P, PageHead, S } from "../components/ui";
-import { useAll, useFiles, useMe, useRefreshAll, useUpdateFile } from "../hooks/useData";
+import { useAll, useFiles, useMe, useRefreshAll, useUpdateCourse } from "../hooks/useData";
 import { pdfToText } from "../lib/pdfText";
 import { col, soft } from "../lib/plan";
 import { sx } from "../lib/sx";
@@ -20,14 +20,21 @@ export function AddClassesPage() {
   const { courses, items } = useAll();
   const files = useFiles();
   const refresh = useRefreshAll();
-  const updateFile = useUpdateFile();
+  const updateCourse = useUpdateCourse();
   const notify = useUi((s) => s.notify);
   const [pending, setPending] = useState<Pending[]>([]);
   const [drag, setDrag] = useState(false);
-  const [del, setDel] = useState<{ id: string; name: string } | null>(null);
+  const [del, setDel] = useState<Course | null>(null);
 
-  const liveItems = items.filter((i) => !i.deleted_at).length;
-  const shownFiles = (files.data ?? []).filter((f) => !f.deleted_at);
+  const liveItems = items.filter((i) => !i.deleted_at && courses.some((c) => c.id === i.course_id)).length;
+  const live = items.filter((i) => !i.deleted_at);
+  const fileFor = (c: Course) => (files.data ?? []).filter((f) => f.course_id === c.id && !f.deleted_at).pop();
+  const sourceOf = (c: Course) => {
+    const f = fileFor(c);
+    if (c.source === "canvas") return (c.canvas_id ?? "").startsWith("ics:") ? "From Canvas calendar feed" : "From Canvas";
+    if (c.source === "syllabus") return "From " + (f?.name ?? c.file_name ?? "a syllabus PDF");
+    return "Added by you";
+  };
 
   const setP = (id: string, patch: Partial<Pending>) => setPending((list) => list.map((p) => (p.id === id ? { ...p, ...patch } : p)));
 
@@ -35,14 +42,14 @@ export function AddClassesPage() {
   const saveParsed = async (p: ParsedSyllabus, fileName: string): Promise<{ course: Course; added: number; flags: number }> => {
     const [courses, items] = await Promise.all([db.listCourses(), db.listItems()]); // fresh, so several files in a row don't collide
     const code = (p.course_code || codeFromName(fileName) || fileName.replace(/\.pdf$/i, "")).trim().slice(0, 40);
-    let course = courses.find((c) => norm(c.code) === norm(code));
+    let course = courses.find((c) => !c.deleted_at && norm(c.code) === norm(code));
     const credits = p.credits ?? 3;
     const notes = [p.notes, !p.meetings.length && p.meeting_days_text ? `The syllabus says: ${p.meeting_days_text}` : null].filter(Boolean).join(" ") || null;
     if (!course) {
       course = await db.insertCourse({
         canvas_id: null, code, name: (p.course_name ?? "").slice(0, 120), color: COLORS[courses.length % COLORS.length] ?? "c1",
         credits, hours_per_week: p.weekly_hours ?? credits * 2.5, online: p.online, meetings: p.meetings, confirmed: false, source: "syllabus",
-        notes, late_policy: p.late_policy, source_lines: p.source_lines.slice(0, 8), file_name: fileName, renamed: false,
+        notes, late_policy: p.late_policy, source_lines: p.source_lines.slice(0, 8), file_name: fileName, renamed: false, deleted_at: null,
       });
     } else {
       await db.updateCourse(course.id, {
@@ -126,40 +133,48 @@ export function AddClassesPage() {
                 )}
               </div>
             ))}
-            {shownFiles.map((f) => {
-              const c = courses.find((x) => x.id === f.course_id);
-              const tint = c ?? { color: "c1" };
+            {courses.length > 0 && <span style={sx("padding: 14px 4px 4px; font-size: 12px; font-weight: 800; color: var(--text-2); border-top: 1px solid var(--line);")}>Your classes</span>}
+            {courses.map((c) => {
+              const mine = live.filter((i) => i.course_id === c.id);
+              const flags = mine.filter((i) => i.confidence < 0.7 && !i.edited).length + (c.online === null ? 1 : 0);
+              const fromCanvas = c.source === "canvas";
               return (
-                <div key={f.id} style={sx("display: flex; align-items: center; gap: 14px; padding: 12px 4px; border-top: 1px solid var(--line);")}>
-                  <div style={sx(`width: 38px; height: 38px; flex-shrink: 0; border-radius: 12px; background: ${soft(tint)}; color: ${col(tint)}; display: flex; align-items: center; justify-content: center;`)}>
-                    <Ico d={P.file} size={18} sw={1.8} />
+                <div key={c.id} style={sx("display: flex; align-items: center; gap: 14px; padding: 12px 4px; border-top: 1px solid var(--line);")}>
+                  <div style={sx(`width: 38px; height: 38px; flex-shrink: 0; border-radius: 12px; background: ${soft(c)}; color: ${col(c)}; display: flex; align-items: center; justify-content: center;`)}>
+                    <Ico d={fromCanvas ? P.school : P.file} size={18} sw={1.8} />
                   </div>
                   <div style={sx("flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px;")}>
-                    <span style={sx("font-size: 14px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;")}>{f.name}</span>
-                    <span style={sx("font-size: 13px; font-weight: 600; color: var(--warn-text);")}>{f.status}</span>
+                    <span style={sx("display: flex; align-items: center; gap: 6px; min-width: 0;")}>
+                      <span style={sx("min-width: 0; font-size: 14px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;")}>{c.code} {c.name}</span>
+                      {c.confirmed && <svg role="img" aria-label="Confirmed" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" style={sx("flex-shrink: 0;")}><path d={P.check} /></svg>}
+                    </span>
+                    <span style={sx("font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;")}>{sourceOf(c)}</span>
+                    <span style={sx("font-size: 13px; font-weight: 600; color: " + (flags ? "var(--warn-text)" : "var(--text-2)") + ";")}>
+                      {mine.length} item{mine.length === 1 ? "" : "s"}{flags ? `, ${flags} to check` : c.confirmed ? ", confirmed" : ", not confirmed yet"}
+                    </span>
                   </div>
-                  <button type="button" onClick={() => nav(c ? `/review?c=${c.id}` : "/review")}
+                  <button type="button" onClick={() => nav(`/review?c=${c.id}`)}
                     style={sx("min-height: 36px; padding: 0 16px; border-radius: 18px; border: 1px solid var(--line-strong); background: var(--surface-2); font-size: 13px; font-weight: 700; color: var(--text); cursor: pointer;")}>Review</button>
-                  <button type="button" onClick={() => setDel({ id: f.id, name: f.name })} aria-label={`Delete ${f.name}`} title={`Delete ${f.name}`}
+                  <button type="button" onClick={() => setDel(c)} aria-label={`Delete ${c.code}`} title={`Delete ${c.code}`}
                     style={sx("width: 36px; height: 36px; flex-shrink: 0; padding: 0; border-radius: 18px; border: 1px solid var(--line-strong); background: transparent; color: var(--text-2); cursor: pointer; display: flex; align-items: center; justify-content: center;")}>
                     <Ico d={P.trash} size={15} sw={1.9} />
                   </button>
                 </div>
               );
             })}
-            {!shownFiles.length && !pending.length && <span style={sx("padding: 12px 4px; font-size: 13px; font-weight: 700; color: var(--text-2);")}>No syllabi added yet.</span>}
+            {!courses.length && !pending.length && <span style={sx("padding: 12px 4px; font-size: 13px; font-weight: 700; color: var(--text-2);")}>No classes added yet. Drop a syllabus PDF or import from Canvas.</span>}
           </div>
         </section>
         <CanvasCard />
       </div>
 
-      <Confirm open={!!del} danger title={`Delete “${del?.name ?? ""}”?`} yes="Delete" onClose={() => setDel(null)}
-        body="The file is removed from this list. Items you already reviewed stay on your calendar. You can restore it from Recently deleted for 1 day."
+      <Confirm open={!!del} danger title={`Delete ${del?.code ?? ""}?`} yes="Delete class" onClose={() => setDel(null)}
+        body={del ? `${del.code} and its ${live.filter((i) => i.course_id === del.id).length} items and study times come off your calendar and won't sync. You can restore it from Recently deleted for 1 day.` : ""}
         onYes={() => {
           if (!del) return;
           const id = del.id;
-          updateFile.mutate({ id, patch: { deleted_at: new Date().toISOString() } });
-          notify({ text: `Deleted ${del.name}.`, undo: () => updateFile.mutate({ id, patch: { deleted_at: null } }) });
+          updateCourse.mutate({ id, patch: { deleted_at: new Date().toISOString() } });
+          notify({ text: `Deleted ${del.code}.`, undo: () => updateCourse.mutate({ id, patch: { deleted_at: null } }) });
         }} />
     </div>
   );

@@ -54,12 +54,13 @@ async def import_canvas(user: User = Depends(current_user)) -> ImportResult:
         (r["course_id"], r["canvas_id"])
         for r in await db.select("items", {"user_id": f"eq.{user.id}", "edited": "eq.true", "select": "course_id,canvas_id"})
     }
-    existing = {
-        r["canvas_id"]: r["id"]
-        for r in await db.select("courses", {"user_id": f"eq.{user.id}", "select": "id,canvas_id"})
-    }
+    rows_ = await db.select("courses", {"user_id": f"eq.{user.id}", "select": "id,canvas_id,deleted_at"})
+    existing = {r["canvas_id"]: r["id"] for r in rows_}
+    deleted = {r["canvas_id"] for r in rows_ if r.get("deleted_at")}  # classes you deleted stay deleted
     n_items = 0
     for i, c in enumerate(courses):
+        if c["canvas_id"] in deleted:
+            continue
         course_id = existing.get(c["canvas_id"])
         if not course_id:
             saved = await db.upsert(

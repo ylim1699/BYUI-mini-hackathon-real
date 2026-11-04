@@ -29,6 +29,7 @@ export const courseSchema = z.object({
   source_lines: z.array(z.object({ text: z.string(), highlight: z.boolean() })).default([]),
   file_name: z.string().nullable().default(null),
   renamed: z.boolean().default(false),
+  deleted_at: z.string().nullable().default(null),
 });
 export type Course = z.infer<typeof courseSchema>;
 

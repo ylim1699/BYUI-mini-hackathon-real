@@ -55,6 +55,16 @@ export async function updateCourse(id: string, patch: Partial<Omit<Course, "id">
   await check(sb().from("courses").update(patch).eq("id", id));
 }
 
+export async function deleteCourseForever(id: string): Promise<void> {
+  if (USE_MOCKS) {
+    mem.courses = mem.courses.filter((c) => c.id !== id);
+    mem.items = mem.items.filter((i) => i.course_id !== id);
+    mem.study = mem.study.filter((s) => s.course_id !== id);
+    return;
+  }
+  await check(sb().from("courses").delete().eq("id", id)); // items, study times, and links are removed with it
+}
+
 // ---------- Items ----------
 
 export async function listItems(): Promise<Item[]> {

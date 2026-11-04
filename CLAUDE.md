@@ -20,7 +20,7 @@ Google Calendar or Outlook.
   - `npm run dev` (needs .env + backend) · `npm run dev:mock` (sample data + fake server, dev only)
   - `npm run typecheck` · `npm test` (run with TZ=America/Denver) · `npm run build`
 - `backend/`: FastAPI (`main:app`). `uvicorn main:app --reload --port 8000` · `python -m pytest -q`
-- `supabase/migrations/`: 001_init.sql then 002_no_login_outlook_review.sql.
+- `supabase/migrations/`: 001_init.sql, 002_no_login_outlook_review.sql, 003_delete_classes.sql.
 - Deploy: Vercel Services (`vercel.json`): frontend at `/`, backend at `/api`.
 - One `.env` in the project root for both sides. Only `VITE_` vars reach the browser.
 

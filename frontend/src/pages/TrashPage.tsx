@@ -1,18 +1,21 @@
 import { useRef, useState } from "react";
 import { PageHead, Spinner } from "../components/ui";
-import { useAll, useFiles, useRefreshAll, useUpdateFile, useUpdateItem } from "../hooks/useData";
+import { useAll, useAllCourses, useFiles, useRefreshAll, useUpdateCourse, useUpdateFile, useUpdateItem } from "../hooks/useData";
 import { col } from "../lib/plan";
 import { sx } from "../lib/sx";
 import * as db from "../services/db";
 import { DAY_MS, stillRestorable, useUi } from "../store/ui";
 
-interface Row { id: string; kind: "item" | "file"; label: string; meta: string; color: string; at: number }
+interface Row { id: string; kind: "item" | "file" | "course"; label: string; meta: string; color: string; at: number }
 
 const ago = (ms: number) => (ms < 60000 ? "just now" : ms < 3600000 ? Math.round(ms / 60000) + " min ago" : Math.round(ms / 3600000) + " h ago");
 const leftTxt = (ms: number) => (ms < 3600000 ? "Gone in " + Math.max(1, Math.round(ms / 60000)) + " min" : "Gone in " + Math.round(ms / 3600000) + " h");
 
 export function TrashPage() {
-  const { courses, items, loading } = useAll();
+  const { items, loading } = useAll();
+  const allCourses = useAllCourses();
+  const courses = allCourses.data ?? [];
+  const updateCourse = useUpdateCourse();
   const files = useFiles();
   const updateItem = useUpdateItem();
   const updateFile = useUpdateFile();
@@ -22,9 +25,15 @@ export function TrashPage() {
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const now = Date.now();
   const course = (id: string | null) => courses.find((c) => c.id === id);
+  const goneCourse = new Set(courses.filter((c) => c.deleted_at).map((c) => c.id));
 
   const rows: Row[] = [
-    ...items.filter((i) => stillRestorable(i.deleted_at)).map((i) => {
+    ...courses.filter((c) => stillRestorable(c.deleted_at)).map((c) => {
+      const at = new Date(c.deleted_at!).getTime(); const n = items.filter((i) => i.course_id === c.id && !i.deleted_at).length;
+      return { id: c.id, kind: "course" as const, label: `${c.code} ${c.name}`.trim(), color: col(c), at,
+        meta: [`Class with ${n} item${n === 1 ? "" : "s"}`, "Deleted " + ago(now - at)].join(" · ") };
+    }),
+    ...items.filter((i) => stillRestorable(i.deleted_at) && !goneCourse.has(i.course_id)).map((i) => {
       const c = course(i.course_id); const at = new Date(i.deleted_at!).getTime();
       const due = i.due_at ? "Due " + new Date(i.due_at).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "";
       return { id: i.id, kind: "item" as const, label: i.title || "Untitled item", color: c ? col(c) : "var(--muted)", at,
@@ -38,10 +47,10 @@ export function TrashPage() {
   ].filter((r) => !purging.has(r.id)).sort((a, b) => b.at - a.at);
 
   const restore = (r: Row) => {
-    if (r.kind === "item") updateItem.mutate({ id: r.id, patch: { deleted_at: null } });
-    else updateFile.mutate({ id: r.id, patch: { deleted_at: null } });
+    const m = r.kind === "item" ? updateItem : r.kind === "course" ? updateCourse : updateFile;
+    m.mutate({ id: r.id, patch: { deleted_at: null } });
     const at = new Date(r.at).toISOString();
-    notify({ text: `Restored ${r.label}.`, undo: () => (r.kind === "item" ? updateItem : updateFile).mutate({ id: r.id, patch: { deleted_at: at } }) });
+    notify({ text: `Restored ${r.label}.`, undo: () => m.mutate({ id: r.id, patch: { deleted_at: at } }) });
   };
 
   // "Delete now" waits for the Undo window before deleting for real.
@@ -49,7 +58,7 @@ export function TrashPage() {
     setPurging((s) => new Set(s).add(r.id));
     const t = setTimeout(async () => {
       timers.current.delete(r.id);
-      await (r.kind === "item" ? db.deleteItemForever(r.id) : db.deleteFileForever(r.id));
+      await (r.kind === "item" ? db.deleteItemForever(r.id) : r.kind === "course" ? db.deleteCourseForever(r.id) : db.deleteFileForever(r.id));
       refresh();
     }, 6500);
     timers.current.set(r.id, t);
@@ -65,7 +74,7 @@ export function TrashPage() {
   return (
     <div className="anim-page" style={sx("display: flex; flex-direction: column; gap: 16px;")}>
       <PageHead title="Recently deleted" sub="Anything you delete stays here for 1 day, then it's gone for good. Restore puts it back where it was." />
-      {loading ? <Spinner /> : (
+      {loading || allCourses.isLoading ? <Spinner /> : (
         <section aria-label="Deleted items" style={sx("max-width: 760px; box-sizing: border-box; padding: 8px 18px; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: 18px;")}>
           {!rows.length && (
             <div style={sx("display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 36px 12px; text-align: center; color: var(--text-2);")}>
