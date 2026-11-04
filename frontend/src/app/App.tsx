@@ -10,6 +10,13 @@ import { StudyPage } from "../pages/StudyPage";
 import { SyncPage } from "../pages/SyncPage";
 import { TrashPage } from "../pages/TrashPage";
 
+/** The start options. Reachable any time from the sidebar logo; your plan stays. */
+function StartGate() {
+  const { loading } = useAuth();
+  if (loading) return <div className="app" style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "var(--bg)" }}><Spinner /></div>;
+  return <StartPage />;
+}
+
 function Gate() {
   const { loading, user, holding } = useAuth();
   if (loading) return <div className="app" style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "var(--bg)" }}><Spinner /></div>;
@@ -18,6 +25,7 @@ function Gate() {
 }
 
 const router = createBrowserRouter([
+  { path: "/start", element: <StartGate /> },
   {
     path: "/",
     element: <Gate />,

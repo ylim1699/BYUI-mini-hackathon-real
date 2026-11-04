@@ -60,9 +60,10 @@ export function AppLayout() {
       {bg !== "original" && <div aria-hidden="true" style={sx("position: fixed; inset: 0; z-index: 0; pointer-events: none; background: linear-gradient(180deg, rgba(8,14,24,0.26) 0%, rgba(8,14,24,0.14) 45%, rgba(8,14,24,0.3) 100%);")} />}
 
       <nav className="rail" aria-label="Main">
-        <div style={sx("width: 48px; height: 48px; margin-bottom: 10px; display: flex; align-items: center; justify-content: center; color: var(--text);")}>
-          <svg role="img" aria-label="Syllabus Planner" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3" /><path d="M3.5 10h17M8 3v4M16 3v4M9 15l2 2 4-4" /></svg>
-        </div>
+        <button type="button" className="rail-btn" onClick={() => nav("/start")} aria-label="Import options: Canvas or syllabus" style={sx("width: 48px; height: 48px; margin-bottom: 10px; border: 0; border-radius: 14px; background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text);")}>
+          <span className="rail-tip" aria-hidden="true">Import options</span>
+          <svg aria-hidden="true" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3" /><path d="M3.5 10h17M8 3v4M16 3v4M9 15l2 2 4-4" /></svg>
+        </button>
         {RAIL.map((r) => {
           const on = loc.pathname.startsWith(r.to);
           return (
