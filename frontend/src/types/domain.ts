@@ -24,6 +24,11 @@ export const courseSchema = z.object({
   meetings: z.array(meetingSchema),
   confirmed: z.boolean(),
   source: z.enum(["canvas", "syllabus", "manual"]),
+  notes: z.string().nullable().default(null),
+  late_policy: z.string().nullable().default(null),
+  source_lines: z.array(z.object({ text: z.string(), highlight: z.boolean() })).default([]),
+  file_name: z.string().nullable().default(null),
+  renamed: z.boolean().default(false),
 });
 export type Course = z.infer<typeof courseSchema>;
 
@@ -39,6 +44,7 @@ export const itemSchema = z.object({
   status: z.enum(["todo", "done"]),
   notes: z.string().nullable(),
   deleted_at: z.string().nullable(),
+  edited: z.boolean().default(false),
 });
 export type Item = z.infer<typeof itemSchema>;
 
@@ -59,6 +65,7 @@ export const meSchema = z.object({
   email: z.string().nullable(),
   canvas: z.enum(["token", "feed"]).nullable(),
   google: z.boolean(),
+  outlook: z.boolean().default(false),
 });
 export type Me = z.infer<typeof meSchema>;
 
@@ -76,6 +83,17 @@ export const syncResultSchema = z.object({
 });
 export type SyncResult = z.infer<typeof syncResultSchema>;
 
+export const syllabusFileSchema = z.object({
+  id: z.string(),
+  course_id: z.string().nullable(),
+  name: z.string(),
+  status: z.string(),
+  deleted_at: z.string().nullable(),
+  created_at: z.string(),
+});
+export type SyllabusFile = z.infer<typeof syllabusFileSchema>;
+
+export const startResultSchema = z.object({ url: z.string().url() });
 export const connectResultSchema = z.object({ connected: z.enum(["token", "feed"]), name: z.string() });
 export const okSchema = z.object({ ok: z.boolean() });
 export const removedSchema = z.object({ removed: z.boolean() });
@@ -84,8 +102,13 @@ export const parsedSyllabusSchema = z.object({
   course_code: z.string().nullable(),
   course_name: z.string().nullable(),
   credits: z.number().nullable(),
+  weekly_hours: z.number().nullable().default(null),
   online: z.boolean().nullable(),
   meetings: z.array(meetingSchema),
+  meeting_days_text: z.string().nullable().default(null),
+  late_policy: z.string().nullable().default(null),
+  notes: z.string().nullable().default(null),
+  source_lines: z.array(z.object({ text: z.string(), highlight: z.boolean() })).default([]),
   items: z.array(z.object({
     title: z.string(),
     type: itemTypeSchema,
@@ -93,6 +116,7 @@ export const parsedSyllabusSchema = z.object({
     due_time: z.string().nullable(),
     confidence: z.number(),
     note: z.string().nullable(),
+    hours: z.number().nullable().default(null),
   })),
 });
 export type ParsedSyllabus = z.infer<typeof parsedSyllabusSchema>;

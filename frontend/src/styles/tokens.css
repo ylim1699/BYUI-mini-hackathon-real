@@ -1,5 +1,5 @@
 /* Copied from the approved prototype. Change here, not in components. */
-:root {
+.app {
   color-scheme: dark;
   --bg: #13161b;
   --rail-bg: #171b20;
@@ -8,8 +8,9 @@
   --text: #e7e9ec; --text-2: #b6bbc2; --muted: #8e949d;
   --today: #2a3546; --weekend: #e58a80;
   --primary-bg: #e7e9ec; --primary-text: #15181c;
-  --warn-bg: rgba(232,180,95,0.13); --warn-line: rgba(232,180,95,0.32); --warn-text: #e9b866;
+  --warn-bg: rgba(232,180,95,0.13); --warn-line: rgba(232,180,95,0.32); --warn-text: #e9b866; --warn-card: #1f2228;
   --field: #14171c; --flag-row: rgba(232,180,95,0.07); --edit-row: rgba(127,164,238,0.08); --ok: #6fcbbe;
+  --study-a: rgba(170,180,215,0.14); --study-b: rgba(170,180,215,0.05); --study-line: rgba(175,185,220,0.38);
   --class-bg: rgba(255,255,255,0.07);
   --c1: #7fa4ee; --c1-soft: rgba(127,164,238,0.2); --c1-block: rgba(127,164,238,0.3);
   --c2: #5fc0b2; --c2-soft: rgba(95,192,178,0.2); --c2-block: rgba(95,192,178,0.3);
@@ -20,4 +21,11 @@
   --c7: #6fc3e8; --c7-soft: rgba(111,195,232,0.2); --c7-block: rgba(111,195,232,0.3);
   --c8: #d6c36a; --c8-soft: rgba(214,195,106,0.2); --c8-block: rgba(214,195,106,0.3);
   --shadow: 0 18px 40px rgba(0,0,0,0.45);
+}
+/* "Sky clouds" background */
+.app[data-bg="day"] {
+  --surface: rgba(20,24,30,0.55); --surface-2: rgba(255,255,255,0.1); --surface-3: rgba(255,255,255,0.2);
+  --line: rgba(255,255,255,0.12); --line-strong: rgba(255,255,255,0.26); --panel: rgba(22,26,32,0.86);
+  --rail-bg: rgba(15,18,23,0.74); --warn-card: rgba(22,26,32,0.68); --today: rgba(56,92,150,0.62);
+  --onbg-shadow: 0 1px 8px rgba(0,0,0,0.6);
 }

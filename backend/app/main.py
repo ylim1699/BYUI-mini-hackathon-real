@@ -2,7 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
-from .routes import canvas, google, me, syllabus, summary
+from .routes import canvas, me, syllabus, summary
+from .routes.calendars import google_router, outlook_router
 
 
 def create_app() -> FastAPI:
@@ -24,9 +25,10 @@ def create_app() -> FastAPI:
             "missing": st.missing(),
             "ai": bool(st.gemini_api_key),
             "google": bool(st.google_client_id and st.google_client_secret),
+            "outlook": bool(st.microsoft_client_id and st.microsoft_client_secret),
         }
 
-    for r in (me.router, canvas.router, syllabus.router, google.router, summary.router):
+    for r in (me.router, canvas.router, syllabus.router, google_router, outlook_router, summary.router):
         app.include_router(r, prefix="/api")
     return app
 

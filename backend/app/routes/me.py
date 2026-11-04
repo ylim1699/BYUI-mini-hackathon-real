@@ -14,4 +14,5 @@ async def me(user: User = Depends(current_user)) -> dict[str, object]:
         "email": user.email,
         "canvas": "token" if conn.get("canvas_token_enc") else ("feed" if conn.get("canvas_ics_enc") else None),
         "google": bool(conn.get("google_refresh_enc")),
+        "outlook": bool(conn.get("ms_refresh_enc")),
     }

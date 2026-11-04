@@ -1,15 +1,17 @@
 // Reads and writes the student's own rows in Supabase (row-level security enforces ownership).
-// With VITE_USE_MOCKS=true everything lives in memory, so the app runs with no keys.
+// With VITE_USE_MOCKS=true everything lives in memory with sample data (for local development only).
 import { z } from "zod";
 import {
-  blockLinkSchema, courseSchema, itemSchema, studyTimeSchema,
-  type BlockLink, type Course, type Item, type StudyTime,
+  blockLinkSchema, courseSchema, itemSchema, studyTimeSchema, syllabusFileSchema,
+  type BlockLink, type Course, type Item, type StudyTime, type SyllabusFile,
 } from "../types/domain";
-import { mockCourses, mockItems, mockLinks, mockStudyTimes } from "./mock/data";
+import { mockCourses, mockFiles, mockItems, mockLinks, mockStudyTimes } from "./mock/data";
 import { supabase, USE_MOCKS } from "./supabase";
 
-const wait = (ms = 150) => new Promise((r) => setTimeout(r, ms));
-const mem = { courses: [...mockCourses], items: [...mockItems], study: [...mockStudyTimes], links: [...mockLinks] };
+const wait = (ms = 120) => new Promise((r) => setTimeout(r, ms));
+const mem = {
+  courses: [...mockCourses], items: [...mockItems], study: [...mockStudyTimes], links: [...mockLinks], files: [...mockFiles],
+};
 const newId = () => (globalThis.crypto?.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
 function sb() {
@@ -19,11 +21,11 @@ function sb() {
 
 async function uid(): Promise<string> {
   const { data } = await sb().auth.getUser();
-  if (!data.user) throw new Error("You're signed out. Sign in again.");
+  if (!data.user) throw new Error("Your session ended. Reload the page.");
   return data.user.id;
 }
 
-async function rows<T>(schema: z.ZodType<T>, q: PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<T[]> {
+async function rows<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, q: PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<T[]> {
   const { data, error } = await q;
   if (error) throw new Error(error.message);
   return z.array(schema).parse(data ?? []);
@@ -38,7 +40,7 @@ async function check(q: PromiseLike<{ error: { message: string } | null }>): Pro
 
 export async function listCourses(): Promise<Course[]> {
   if (USE_MOCKS) return wait().then(() => [...mem.courses]);
-  return rows(courseSchema, sb().from("courses").select("*").order("code"));
+  return rows(courseSchema, sb().from("courses").select("*").order("created_at"));
 }
 
 export async function insertCourse(c: Omit<Course, "id">): Promise<Course> {
@@ -60,11 +62,11 @@ export async function listItems(): Promise<Item[]> {
   return rows(itemSchema, sb().from("items").select("*").order("due_at", { ascending: true, nullsFirst: false }));
 }
 
-export async function insertItems(list: Omit<Item, "id">[]): Promise<void> {
-  if (!list.length) return;
-  if (USE_MOCKS) { mem.items = [...mem.items, ...list.map((i) => ({ ...i, id: newId() }))]; return; }
+export async function insertItems(list: Omit<Item, "id">[]): Promise<Item[]> {
+  if (!list.length) return [];
+  if (USE_MOCKS) { const added = list.map((i) => ({ ...i, id: newId() })); mem.items = [...mem.items, ...added]; return added; }
   const user_id = await uid();
-  await check(sb().from("items").insert(list.map((i) => ({ ...i, user_id }))));
+  return rows(itemSchema, sb().from("items").insert(list.map((i) => ({ ...i, user_id }))).select("*"));
 }
 
 export async function updateItem(id: string, patch: Partial<Omit<Item, "id">>): Promise<void> {
@@ -112,4 +114,26 @@ export async function setLink(block_key: string, item_id: string, on: boolean): 
   }
   if (on) await check(sb().from("block_links").upsert({ block_key, item_id, user_id: await uid() }));
   else await check(sb().from("block_links").delete().eq("block_key", block_key).eq("item_id", item_id));
+}
+
+// ---------- Syllabus files ----------
+
+export async function listFiles(): Promise<SyllabusFile[]> {
+  if (USE_MOCKS) return wait().then(() => [...mem.files]);
+  return rows(syllabusFileSchema, sb().from("syllabus_files").select("id,course_id,name,status,deleted_at,created_at").order("created_at"));
+}
+
+export async function insertFile(f: Pick<SyllabusFile, "course_id" | "name" | "status">): Promise<void> {
+  if (USE_MOCKS) { mem.files = [...mem.files, { ...f, id: newId(), deleted_at: null, created_at: new Date().toISOString() }]; return; }
+  await check(sb().from("syllabus_files").insert({ ...f, user_id: await uid() }));
+}
+
+export async function updateFile(id: string, patch: Partial<Pick<SyllabusFile, "deleted_at" | "status">>): Promise<void> {
+  if (USE_MOCKS) { mem.files = mem.files.map((f) => (f.id === id ? { ...f, ...patch } : f)); return; }
+  await check(sb().from("syllabus_files").update(patch).eq("id", id));
+}
+
+export async function deleteFileForever(id: string): Promise<void> {
+  if (USE_MOCKS) { mem.files = mem.files.filter((f) => f.id !== id); return; }
+  await check(sb().from("syllabus_files").delete().eq("id", id));
 }

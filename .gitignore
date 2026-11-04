@@ -2,7 +2,7 @@
 .env
 .env.*
 !.env.example
-!.env.demo
+!.env.mock
 
 # Node
 node_modules/

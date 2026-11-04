@@ -3,9 +3,59 @@
 @tailwind components;
 @tailwind utilities;
 
-body { margin: 0; background: var(--bg); color: var(--text); font-family: Manrope, system-ui, sans-serif; }
-button, input, select { font-family: inherit; }
-:focus-visible { outline: 2px solid var(--c1); outline-offset: 2px; }
-@keyframes cardIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-.anim-page { animation: cardIn .32s cubic-bezier(.2,.8,.2,1) backwards; }
-@media (prefers-reduced-motion: reduce) { .anim-page { animation: none; } }
+/* From the prototype's stylesheet */
+body { margin: 0; font-family: Manrope, system-ui, sans-serif; background: #13161b; }
+a { color: #7fa4ee; } a:hover { color: #a9c2f4; }
+button, input, select, textarea { font-family: inherit; }
+.hi-input::placeholder { color: var(--text); opacity: .75; font-weight: 700; }
+.rail-btn { position: relative; }
+.rail-tip { position: fixed; left: 88px; top: 0; transform: translateY(-50%); white-space: nowrap; padding: 7px 11px; border-radius: 9px; background: var(--primary-bg); color: var(--primary-text); font-size: 12px; font-weight: 700; opacity: 0; pointer-events: none; transition: opacity .12s ease; z-index: 50; box-shadow: var(--shadow); }
+.rail-btn:hover .rail-tip, .rail-btn:focus-visible .rail-tip { opacity: 1; }
+.app[data-bg="day"] main h1, .app[data-bg="day"] main header p, .app[data-bg="day"] .on-bg { text-shadow: 0 1px 10px rgba(0,0,0,0.55); }
+.frost { backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+.rail { position: sticky; top: 0; align-self: flex-start; z-index: 3; flex: 0 0 76px; background: var(--rail-bg); display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px 0; box-sizing: border-box; border-right: 1px solid var(--line); height: 100vh; overflow: visible; }
+.rail > * { flex-shrink: 0; }
+.rail-spacer { flex-grow: 1; }
+@media (max-width: 760px) {
+  .cal-head { grid-template-columns: auto minmax(0, 1fr) auto !important; }
+  .cal-head h1 { font-size: 17px !important; white-space: normal !important; justify-content: center; text-align: center; }
+  .cal-zoom { display: none !important; }
+  .rail-tip { display: none; }
+  .rail { position: relative; align-self: stretch; height: auto; flex: 1 1 100%; flex-direction: row; min-height: 0; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--line); overflow-x: auto; overflow-y: hidden; }
+}
+.cell { width: 100%; box-sizing: border-box; border: 1px solid transparent; background: transparent; border-radius: 8px; padding: 7px 8px; font-size: 13px; color: var(--text); }
+.cell:hover { border-color: var(--line-strong); background: var(--surface-2); }
+.cell:focus { outline: none; border-color: var(--c1); background: var(--surface-3); }
+.app select { background-color: var(--field) !important; color: var(--text) !important; border: 1px solid var(--line-strong) !important; cursor: pointer; }
+.app select:hover { border-color: var(--text-2) !important; }
+.app select option { background-color: var(--field); color: var(--text); }
+.app input[type="date"], .app input[type="time"], .app input[type="number"] { border-color: var(--line); }
+.app button:focus-visible, .app a:focus-visible, .app select:focus-visible, .app input:focus-visible, .app textarea:focus-visible { outline: 2px solid var(--c1); outline-offset: 2px; }
+.clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+@keyframes pageIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes viewIn { from { opacity: 0; transform: scale(.992); } to { opacity: 1; transform: none; } }
+@keyframes popIn { from { opacity: 0; transform: translateY(-6px) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes dialogIn { from { opacity: 0; transform: translateY(12px) scale(.97); } to { opacity: 1; transform: none; } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes toastIn { from { opacity: 0; transform: translate(-50%, 14px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@keyframes cardInA { from { opacity: 0; transform: translateY(5px) scale(.97); } to { opacity: 1; transform: none; } }
+@keyframes cardInB { from { opacity: 0; transform: translateY(5px) scale(.97); } to { opacity: 1; transform: none; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+.anim-page { animation: pageIn .34s cubic-bezier(.2,.8,.2,1) both; }
+.anim-view { animation: viewIn .26s ease-out both; }
+.anim-pop { animation: popIn .2s cubic-bezier(.2,.8,.2,1) both; transform-origin: top center; }
+.anim-menu { animation: popIn .18s cubic-bezier(.2,.8,.2,1) both; transform-origin: bottom left; }
+.anim-dialog { animation: dialogIn .26s cubic-bezier(.2,.8,.2,1) both; }
+.anim-backdrop { animation: fadeIn .2s ease-out both; }
+.anim-toast { animation: toastIn .28s cubic-bezier(.2,.8,.2,1) both; }
+.anim-fade { animation: fadeIn .2s ease-out both; }
+.app button, .app input, .app select, .app label { transition: background-color .16s ease, color .16s ease, border-color .16s ease, opacity .16s ease, box-shadow .16s ease, transform .16s ease; }
+.app button:active { transform: scale(.98); }
+.lift:hover { transform: translateY(-1px); border-color: var(--line-strong); }
+.bar-anim { transition: width .6s cubic-bezier(.2,.8,.2,1); }
+.cal-scroll { scrollbar-color: var(--line-strong) transparent; scrollbar-width: thin; }
+.cal-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+.cal-scroll::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 5px; }
+.spinner { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--line-strong); border-top-color: var(--text); animation: spin .8s linear infinite; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

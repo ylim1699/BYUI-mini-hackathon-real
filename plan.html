@@ -66,7 +66,7 @@
 <div class="wrap">
 
 <h1>Syllabus Planner: build plan</h1>
-<p class="lede">The reference Claude follows when building this app. Version 2, Nov 3, 2026: the approved UI prototype now overrides anything in version 1 that disagrees with it. The app is built for real (Google sign-in, Canvas, Google Calendar, Gemini) and hosted on Vercel.</p>
+<p class="lede">The reference Claude follows when building this app. Version 2, Nov 3, 2026: the approved UI prototype now overrides anything in version 1 that disagrees with it. The app is built for real (Canvas, Google Calendar, Outlook, Gemini) and hosted on Vercel. Update Nov 3: no sign-in. People start with a Canvas token or "Try the demo" (empty until they add their own syllabus); each browser gets a private Supabase anonymous session.</p>
 
 <div class="note"><strong>Source of truth for the UI:</strong> the Syllabus Planner prototype (design canvas artifact). When this plan and the prototype disagree about how a screen looks or behaves, the prototype wins, and this plan is updated to match.</div>
 
@@ -90,7 +90,7 @@
 </nav>
 
 <h2 id="product">1. What we're building</h2>
-<p>A web app that pulls a student's classes and assignments from Canvas (and from syllabus text), lets them fix anything, plans weekly study time per class, and syncs everything to Google Calendar (Outlook later) with reminders. A short AI summary says what matters today and this week. Free, built for the BYU-Idaho hackathon.</p>
+<p>A web app that pulls a student's classes and assignments from Canvas (and from syllabus text), lets them fix anything, plans weekly study time per class, and syncs everything to Google Calendar or Outlook with reminders. A short AI summary says what matters today and this week. Free, built for the BYU-Idaho hackathon.</p>
 <ul>
   <li><strong>Everything is editable.</strong> Items, dates, class names, class times, study times.</li>
   <li><strong>Study time is per class.</strong> The student sets weekly study times for each class (no shared study time). Each block shows what that class has due, and the student stars the assignments they'll work on in that block.</li>
@@ -126,7 +126,7 @@
 <tr><td>Calendar</td><td>Custom Month / Week / Day views (no FullCalendar)</td><td>Matches the prototype; no drag</td></tr>
 <tr><td>Dates</td><td>date-fns</td><td></td></tr>
 <tr><td>Validation</td><td>zod / Pydantic</td><td></td></tr>
-<tr><td>Auth + database</td><td>Supabase (Google sign-in, Postgres with row-level security)</td><td></td></tr>
+<tr><td>Auth + database</td><td>Supabase (anonymous sign-in per browser, no account; Postgres with row-level security)</td><td></td></tr>
 <tr><td>Backend</td><td>FastAPI (Python)</td><td>Canvas, Google Calendar, Gemini; holds all secrets</td></tr>
 <tr><td>AI</td><td>Gemini API free tier (<code>gemini-2.5-flash</code>, set by env)</td><td>Summary and syllabus parsing; JSON-schema output</td></tr>
 <tr><td>Hosting</td><td>Vercel, one project with Services: <code>frontend/</code> at <code>/</code>, <code>backend/</code> at <code>/api</code></td><td>Local dev: Vite on 5173 proxies <code>/api</code> to uvicorn on 8000</td></tr>
@@ -176,8 +176,10 @@
 <tr><td><code>POST /api/canvas/connect</code></td><td>Save a Canvas access token (checked against Canvas first) or a calendar feed URL, encrypted</td></tr>
 <tr><td><code>POST /api/canvas/import</code></td><td>Pull active courses and assignments (token) or feed events (URL) into courses and items</td></tr>
 <tr><td><code>POST /api/syllabus/parse</code></td><td>Gemini reads syllabus text (Canvas syllabus page or pasted PDF text) and returns class times, credits, and items with confidence</td></tr>
-<tr><td><code>POST /api/google/link</code></td><td>Store the Google refresh token captured at sign-in, encrypted</td></tr>
-<tr><td><code>POST /api/google/sync</code></td><td>Create or update events in a separate "Syllabus Planner" Google calendar; removes events that no longer exist</td></tr>
+<tr><td><code>POST /api/{google|outlook}/start</code></td><td>Returns the consent page URL with a signed 10-minute state</td></tr>
+<tr><td><code>GET /api/{google|outlook}/callback</code></td><td>Exchanges the code, stores the refresh token encrypted, sends the browser back to Reminders and sync</td></tr>
+<tr><td><code>POST /api/{google|outlook}/sync</code></td><td>Create or update events in a separate "Syllabus Planner" calendar; removes upcoming events that no longer exist</td></tr>
+<tr><td><code>POST /api/{google|outlook}/remove-all</code>, <code>/disconnect</code></td><td>Delete the app's calendar; forget the connection</td></tr>
 <tr><td><code>POST /api/summary</code></td><td>Gemini summary for today or this week from item titles and dates only; daily limit per user</td></tr>
 </table></div>
 
@@ -254,14 +256,12 @@
 <p>Copy the prototype's tokens (dark theme, opaque gray cards, class colors c1–c3, warning colors), shapes (18 px cards, pill buttons), and animations (card-in, expand with clip, reduced motion respected). Class colors always come with an icon or label, never color alone. Plain sentence-case copy.</p>
 
 <h2 id="phases">13. Phases</h2>
-<div class="phase"><h3>Phase 1: Foundation (done in this commit)</h3>
-<p>Repo, Vercel Services config, Supabase schema with RLS, FastAPI with every integration route, frontend with Google sign-in, Canvas connect and import, items list, Google sync button, AI summary.</p>
-<p><strong>Done when:</strong> sign in with Google, import from Canvas, see items, push them to Google Calendar, get a summary.</p></div>
-<div class="phase"><h3>Phase 2: App shell and Review</h3><p>Sidebar, tokens, backgrounds, Review screen with editable items, class names, class times, Recently deleted.</p></div>
-<div class="phase"><h3>Phase 3: Calendar</h3><p>Month / Week / Day, Show menu, key, item card, study block card with starring, Overview, AI summary card.</p></div>
-<div class="phase"><h3>Phase 4: Study time</h3><p>Per-class weekly times, quick setups, drafts with Confirm, leave guard.</p></div>
-<div class="phase"><h3>Phase 5: Reminders and sync</h3><p>Reminder rules, Sync preview, emoji switch, full sync with study notes and class meetings.</p></div>
-<div class="phase"><h3>Phase 6: Polish and stretch</h3><p>Mobile pass, installable on phones (PWA), empty and error states, demo script; Outlook (Microsoft Graph) if time allows.</p></div>
+<div class="phase"><h3>Phase 1: Foundation ✅</h3><p>Repo, Vercel Services config, Supabase schema with RLS, FastAPI with every integration route.</p></div>
+<div class="phase"><h3>Phase 2: App shell and Review ✅</h3><p>Start screen (Canvas token or Try the demo), sidebar, tokens, backgrounds, Review screen with editable items, rename, class times, Recently deleted.</p></div>
+<div class="phase"><h3>Phase 3: Calendar ✅</h3><p>Month / Week / Day, Show menu, zoom, key, item card, study block card with starring, Overview, AI summary card. Overlapping study blocks sit side by side.</p></div>
+<div class="phase"><h3>Phase 4: Study time ✅</h3><p>Per-class weekly times, quick setups, drafts with Confirm, leave guard.</p></div>
+<div class="phase"><h3>Phase 5: Reminders and sync ✅</h3><p>Reminder rules, Sync preview, emoji switch, Google Calendar and Outlook connect, send, and remove.</p></div>
+<div class="phase"><h3>Phase 6: Polish and stretch</h3><p>Test with real keys, mobile pass, installable on phones (PWA), demo script. Not ported from the prototype: scheduled AI summaries (daily / week ahead), which need a scheduler.</p></div>
 <div class="phase"><h3>After the hackathon</h3><p>Native mobile app (checking things off and reminders on the go), two-way sync, more schools' Canvas.</p></div>
 
 <h2 id="done">14. Definition of done (every change)</h2>

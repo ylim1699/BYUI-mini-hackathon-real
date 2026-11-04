@@ -1,51 +1,52 @@
 # Syllabus Planner — notes for Claude
 
 BYU-Idaho mini hackathon app (owner: Yujin). Turns syllabi + Canvas into a plan (due dates, weekly
-study blocks, class times) and syncs it one-way into a separate "Syllabus Planner" Google calendar.
+study blocks, class times) and syncs it one-way into a separate "Syllabus Planner" calendar in
+Google Calendar or Outlook.
 
 ## Source of truth
 - **UI/behavior:** the approved prototype (design canvas): https://claude.ai/artifact/V1hEB7CacyMWRt6x9cm5wC
+  The real screens reuse the prototype's CSS strings via `sx("...")` (src/lib/sx.ts). Keep it that way.
   When the prototype and `plan.html` disagree, the prototype wins and plan.html is updated to match.
-- **Architecture/roadmap:** `plan.html` (stack, data model, API, security, phases).
+- **Architecture/roadmap:** `plan.html`. **Setup:** `README.md`.
+
+## No sign-in
+- Start screen: Canvas token (or calendar feed link) → import → Review; or **Try the demo** → empty → Add classes.
+- Each browser gets a Supabase **anonymous** session (`signInAnonymously`); RLS works as usual. "Start over" signs out.
+- Google Calendar / Outlook are connected later on Reminders and sync (OAuth start → callback on the backend).
 
 ## Stack and commands
-- `frontend/`: Vite + React 18 + TS strict + Tailwind 3 (colors are CSS vars in `src/styles/tokens.css`),
-  React Router (data router, `createBrowserRouter`), TanStack Query, Zustand, zod, date-fns, Vitest, pdfjs-dist.
-  - `npm run dev:demo` (sample data, no keys) · `npm run dev` · `npm run typecheck` · `npm test` · `npm run build`
-  - Tests that touch dates: run with TZ=America/Denver.
-- `backend/`: FastAPI (`main:app`), httpx, pydantic-settings, Fernet, icalendar, google-genai, nh3. `python -m pytest -q`
-  - Local: `uvicorn main:app --reload --port 8000` (Vite proxies /api to it).
-- `supabase/migrations/001_init.sql`: tables with RLS "own rows" policies; `connections` is backend-only.
-- Deploy: Vercel Services (`vercel.json`): frontend at `/`, backend at `/api` (backend sees full `/api/...` paths).
-- One `.env` in the project root is read by both sides. Only `VITE_` vars reach the browser — never secrets.
+- `frontend/`: Vite + React 18 + TS strict, React Router (data router), TanStack Query, Zustand, zod, date-fns, Vitest, pdfjs-dist.
+  - `npm run dev` (needs .env + backend) · `npm run dev:mock` (sample data + fake server, dev only)
+  - `npm run typecheck` · `npm test` (run with TZ=America/Denver) · `npm run build`
+- `backend/`: FastAPI (`main:app`). `uvicorn main:app --reload --port 8000` · `python -m pytest -q`
+- `supabase/migrations/`: 001_init.sql then 002_no_login_outlook_review.sql.
+- Deploy: Vercel Services (`vercel.json`): frontend at `/`, backend at `/api`.
+- One `.env` in the project root for both sides. Only `VITE_` vars reach the browser.
 
 ## Layout
-- Pages: `frontend/src/pages/*Page.tsx` (Add classes, Review, Study, Calendar, Sync, Trash, Login).
-- Data: pages use hooks in `src/hooks/useData.ts`; hooks call `src/services/db.ts` (Supabase or in-memory mocks)
-  and `src/services/api.ts` (backend, or `services/mock/api.ts` in demo mode).
-- Pure logic with tests: `src/lib/syncPayload.ts`, `src/lib/calendar.ts`.
-- Shared UI: `src/components/ui` (Button, Card, Dialog, Confirm, Toaster, Switch, Icon).
-- Types mirror backend: `src/types/domain.ts` <-> `backend/app/schemas.py`.
+- Screens: `frontend/src/pages/*Page.tsx` (Start, AddClasses, Review, Study, Calendar, Sync, Trash).
+- Calendar parts: `src/components/calendar/` (shared styles, Dialogs = item detail + study block, Side = AI summary + Overview).
+- Data: pages use hooks in `src/hooks/useData.ts` → `src/services/db.ts` (Supabase, or in-memory mocks) and `src/services/api.ts`.
+- Pure logic with tests: `src/lib/plan.ts` (times, items per day, study slots, overlap columns), `src/lib/syncPayload.ts`.
+- Backend: `app/events.py` builds provider-neutral events; `google_cal.py` / `outlook.py` format and sync;
+  `routes/calendars.py` makes the same routes for both; `oauth.py` signs the OAuth state.
 
 ## Decisions to keep
-- Google scope is only `calendar.app.created`; events go in the app's own calendar, tagged
-  `extendedProperties.private.syllabusPlanner="1"` + `spKey`. Resync updates by key, removes upcoming events
-  for deleted items, leaves past events. Done items sync as "✅ Done: …" with no reminders. Remove-all deletes the calendar.
-- Refresh token: sign in with `access_type=offline`, `prompt=consent`; `session.provider_refresh_token` is POSTed
-  to `/api/google/link` and stored Fernet-encrypted.
+- Google scope only `calendar.app.created`; Outlook delegated `Calendars.ReadWrite offline_access`.
+- Events go in the app's own calendar with a hidden key (Google: private extended property; Outlook: single-value
+  extended property). Resync updates by key, removes upcoming events for deleted items, leaves past ones.
+  Done items sync as "✅ Done: …" with no reminders. Remove-all deletes the app calendar. Outlook gets one reminder (the earliest).
 - Study block key: `YYYY-MM-DD|HH:MM|<courseId>` (links "studying for" items to one block occurrence).
 - Class meeting times appear on the calendar/sync only after the class is confirmed in Review.
-- Confirms: Review "Confirm CSE 280?" -> go to Study time for that class. Study "Confirm CSE 325 study time?" stays on page.
-  Deletes ask first and go to Recently deleted for 1 day.
-- Gemini free tier (`gemini-2.5-flash`): send only titles/dates/syllabus text; per-user daily limit `AI_DAILY_LIMIT`.
-- Supabase new keys: `sb_secret_...` goes only in the `apikey` header (backend/app/db.py handles both formats).
-- User-facing copy: plain, short, sentence case; every destructive action asks first and offers Undo.
+- Confirms: Review "Confirm CSE 280?" → Study time for that class. Study "Confirm CSE 325 study time?" stays on page.
+  Every delete asks first, then Recently deleted for 1 day; "Delete now" waits for the Undo window.
+- Syllabus PDFs are read in the browser (pdfjs); only text goes to Gemini. Re-adding never duplicates items (title match).
+- Canvas re-import keeps the student's edits (`items.edited`) and marks items already submitted on Canvas as done.
+- AI: per-browser and site-wide daily limits; summaries cached per day in localStorage.
+- User-facing copy: plain, short, sentence case.
 
 ## Status
-Built: all screens as a first working pass, backend complete and tested, demo mode.
-Not yet ported from the prototype (next work, roughly Phases 2–6 in plan.html):
-- Calendar: Month and Day views, hour grid, Show menu (dropdown filter), key/legend (Due/Study/Class chips),
-  richer item card, "Studying for" line in Day view, overdue chip styling.
-- Sidebar background picker (Original, Sky clouds) and backgrounds.
-- Review drafts/flag styling details, sync preview polish, mobile pass, PWA, Outlook (Microsoft Graph).
-Always compare against the prototype before calling a screen done.
+Done: all screens ported from the prototype, backend complete and tested.
+Not done: testing against real Supabase/Google/Microsoft/Gemini keys; scheduled AI summaries (prototype's
+"Daily summary / Week ahead" selects need a scheduler); PWA; two-way sync.

@@ -4,8 +4,10 @@ import { DEFAULT_REMINDERS } from "../types/domain";
 import { buildSyncPayload } from "./syncPayload";
 
 const now = new Date(2026, 10, 3, 12, 0); // Tue Nov 3, noon local
+// CSE 280 meets in person Mon/Wed in these tests
+const courses = mockCourses.map((c) => (c.id === "c2" ? { ...c, online: false, meetings: [{ day: 1, start: "09:45", end: "10:45" }, { day: 3, start: "09:45", end: "10:45" }] } : c));
 const base = {
-  courses: mockCourses, items: mockItems, studyTimes: mockStudyTimes, links: mockLinks,
+  courses, items: mockItems, studyTimes: mockStudyTimes, links: mockLinks,
   rules: DEFAULT_REMINDERS, now, timeZone: "America/Denver", emoji: true, semesterEnd: new Date(2026, 11, 16),
 };
 

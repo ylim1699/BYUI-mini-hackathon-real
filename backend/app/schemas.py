@@ -41,22 +41,29 @@ class ParsedItem(BaseModel):
     due_time: str | None = Field(default=None, description="HH:MM 24h, or null")
     confidence: float = Field(ge=0, le=1)
     note: str | None = Field(default=None, description="Why this item is uncertain, if it is")
+    hours: float | None = Field(default=None, description="Rough hours of work, if you can tell")
+
+
+class SourceLine(BaseModel):
+    text: str = Field(description="A short line quoted from the syllabus")
+    highlight: bool = Field(description="True if a date or class time was found on this line")
 
 
 class ParsedSyllabus(BaseModel):
     course_code: str | None = None
     course_name: str | None = None
     credits: float | None = None
+    weekly_hours: float | None = Field(default=None, description="Hours of work a week, only if the syllabus says")
     online: bool | None = None
     meetings: list[Meeting] = []
+    meeting_days_text: str | None = Field(default=None, description="What the syllabus says about when class meets")
+    late_policy: str | None = Field(default=None, description="Late work policy in under 12 words")
+    notes: str | None = Field(default=None, description="1-2 short sentences: what's missing or assumed")
+    source_lines: list[SourceLine] = Field(default=[], description="Up to 6 short lines quoted from the syllabus")
     items: list[ParsedItem] = []
 
 
 # ---------- Google sync ----------
-
-class GoogleLink(BaseModel):
-    refresh_token: str = Field(min_length=10, max_length=600)
-
 
 class SyncDue(BaseModel):
     key: str = Field(max_length=200)

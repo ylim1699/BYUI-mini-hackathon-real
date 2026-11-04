@@ -10,7 +10,11 @@ from .schemas import ParsedSyllabus, Summary, SummaryIn
 
 
 async def check_quota(user_id: str) -> None:
-    count = await db.rpc("bump_ai_usage", {"p_user": user_id, "p_day": date.today().isoformat()})
+    day = date.today().isoformat()
+    total = await db.rpc("bump_ai_global", {"p_day": day})
+    if isinstance(total, int) and total > get_settings().ai_global_daily_limit:
+        raise AppError(429, "The app's AI limit for today is used up. It resets tomorrow.", "ai_limit")
+    count = await db.rpc("bump_ai_usage", {"p_user": user_id, "p_day": day})
     if isinstance(count, int) and count > get_settings().ai_daily_limit:
         raise AppError(429, "You've used today's AI limit. It resets tomorrow.", "ai_limit")
 
@@ -50,6 +54,11 @@ Return only what the text supports. Never invent dates.
   confidence below 0.7 when the date, title, or type is unclear, and say why in note.
 - meetings: in-person class meeting days and times (0=Sunday). Empty if online or unknown.
 - online: true if the course is online-only, false if it meets in person, null if unclear.
+- meeting_days_text: what the syllabus says about meeting days/times, even if no exact times.
+- credits and weekly_hours only when stated. late_policy in under 12 words.
+- notes: 1-2 short sentences on what's missing or assumed (for example "Class times aren't listed").
+- source_lines: up to 6 short quotes from the syllabus; highlight=true for lines where you found dates or class times.
+- hours: rough hours of work per item when you can estimate it (exam 3, project 3, assignment 2, quiz 0.5, reading 1).
 Semester start: {semester_start}
 Course code hint: {code}
 

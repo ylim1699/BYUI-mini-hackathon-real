@@ -1,260 +1,551 @@
-import { useMutation } from "@tanstack/react-query";
-import { addDays, addWeeks, endOfDay, format, isSameDay, isToday, startOfDay, startOfWeek } from "date-fns";
-import { useMemo, useState } from "react";
+import { addDays, addMonths } from "date-fns";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button, Card, Dialog, Dot, ErrorNote, PageHeader, Spinner } from "../components/ui";
-import { Icon } from "../components/ui/Icon";
-import { useAll, useSetLink, useUpdateItem } from "../hooks/useData";
-import { eventsForDay, type CalEvent } from "../lib/calendar";
-import { shortDue, timeLabel } from "../lib/dates";
-import { api } from "../services/api";
-import { summarySchema, TYPE_LABEL, type Item } from "../types/domain";
+import { BlockDialog, ItemDetail, type BlockSel } from "../components/calendar/Dialogs";
+import { ALARM, BOOK, cardOf, SCHOOL, slotStyles } from "../components/calendar/shared";
+import { AiSummary, Overview } from "../components/calendar/Side";
+import { ErrorNote, Ico, P, S, Spinner, SwitchTrack } from "../components/ui";
+import { useAll } from "../hooks/useData";
+import { dayKey } from "../lib/dates";
+import { AN, col, dotStyle, fmtDay, fmtT, groupByDay, hm, liveLinks, overlapColumns, pill, planItems, slotsOn, type PlanItem, type Slot } from "../lib/plan";
+import { sx } from "../lib/sx";
+import { useUi } from "../store/ui";
+import type { Course } from "../types/domain";
 
-type Kind = CalEvent["kind"];
-const KIND_LABEL: Record<Kind, string> = { due: "Due", study: "Study", class: "Class" };
+type Show = "todo" | "all" | "done" | "none";
+const ZOOMS = [0.7, 0.85, 1, 1.15, 1.3, 1.5, 1.75];
+const HEADS = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
+const SHOW_OPTS: [Show, string, string][] = [
+  ["todo", "To do", "Only what still needs doing. This is the default."],
+  ["all", "Everything", "Finished and unfinished assignments"],
+  ["done", "Done", "Only what you have finished"],
+  ["none", "No assignments", "Just your classes and study time"],
+];
+const monday = (d: Date) => addDays(d, -((d.getDay() + 6) % 7));
 
 export function CalendarPage() {
   const data = useAll();
   const nav = useNavigate();
-  const [week, setWeek] = useState(() => startOfWeek(new Date()));
-  const [show, setShow] = useState<Record<Kind, boolean>>({ due: true, study: true, class: true });
-  const [hidden, setHidden] = useState<string[]>([]);
-  const [openItem, setOpenItem] = useState<string | null>(null);
-  const [openBlock, setOpenBlock] = useState<{ id: string; day: Date } | null>(null);
+  const { view, zoomIdx, set } = useUi();
+  const [off, setOff] = useState({ day: 0, week: 0, month: 0 });
+  const [filter, setFilter] = useState<string>("all");
+  const [show, setShow] = useState<Show>("todo");
+  const [studyShown, setStudyShown] = useState(true);
+  const [showMenu, setShowMenu] = useState(false);
+  const [openDay, setOpenDay] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [tick, setTick] = useState(0);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [block, setBlock] = useState<BlockSel | null>(null);
+  const [studyTab, setStudyTab] = useState(0);
+  const [nowTick, setNowTick] = useState(Date.now());
 
-  const days = Array.from({ length: 7 }, (_, i) => addDays(week, i));
-  const cal = { courses: data.courses, items: data.items, studyTimes: data.studyTimes, links: data.links };
-  const byDay = days.map((d) => eventsForDay(d, cal).filter((e) => show[e.kind] && !hidden.includes(e.course.id)));
+  useEffect(() => { const t = setInterval(() => setNowTick(Date.now()), 60_000); return () => clearInterval(t); }, []);
+  // Ctrl/Cmd + scroll over the calendar zooms it (from the prototype)
+  useEffect(() => {
+    let last = 0;
+    const wheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || !(e.target as HTMLElement)?.closest?.(".cal-scroll")) return;
+      e.preventDefault();
+      if (Date.now() - last < 90) return; last = Date.now();
+      const z = useUi.getState().zoomIdx;
+      useUi.getState().set({ zoomIdx: Math.max(0, Math.min(ZOOMS.length - 1, z + (e.deltaY < 0 ? 1 : -1))) });
+    };
+    document.addEventListener("wheel", wheel, { passive: false });
+    return () => document.removeEventListener("wheel", wheel);
+  }, []);
 
-  const item = data.items.find((i) => i.id === openItem);
-  const block = openBlock ? eventsForDay(openBlock.day, cal).find((e) => e.id === openBlock.id) : undefined;
+  const now = new Date(nowTick);
+  const todayKey = dayKey(now);
+  const all = useMemo(() => planItems(data.items, data.courses, now), [data.items, data.courses, todayKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const byDay = useMemo(() => groupByDay(all), [all]);
+  const byId = useMemo(() => new Map(all.map((i) => [i.id, i])), [all]);
+  const anim = AN(tick);
+  const bump = () => setTick((t) => t + 1);
 
   if (data.loading) return <Spinner />;
   if (!data.courses.length) {
-    return <><PageHeader title="Calendar" /><Card><p className="mb-3 text-text-2">Nothing here yet. Add your classes to fill your calendar.</p><Button variant="primary" onClick={() => nav("/add")}>Add classes</Button></Card></>;
+    return (
+      <div className="anim-page" style={sx("display: flex; flex-direction: column; gap: 16px;")}>
+        <section style={sx(S.card + " padding: 28px; display: flex; flex-direction: column; align-items: flex-start; gap: 12px; max-width: 560px;")}>
+          <h1 style={sx("margin: 0; font-size: 22px; font-weight: 800;")}>Your calendar is empty</h1>
+          <span style={sx("font-size: 14px; line-height: 1.55; color: var(--text-2);")}>Add a syllabus PDF or import from Canvas. Once you check the dates, they show up here with your study time and class times.</span>
+          <button type="button" onClick={() => nav("/add")} style={sx(S.primary)}>Add your classes</button>
+        </section>
+      </div>
+    );
   }
 
+  const pass = (c: Course) => filter === "all" || c.id === filter;
+  const passShow = (it: PlanItem) => (show === "all" ? true : show === "todo" ? !it.done : show === "done" ? it.done : false);
+  const visible = (it: PlanItem) => pass(it.course) && passShow(it);
+  const itemsOn = (d: Date) => byDay.get(dayKey(d)) ?? [];
+  const slots = (d: Date) => (studyShown ? slotsOn(d, data.studyTimes, data.courses).filter((sl) => pass(sl.course)) : []);
+  const classesOn = (d: Date) => data.courses.filter((c) => c.confirmed && c.online === false && pass(c))
+    .flatMap((c) => c.meetings.filter((m) => m.day === d.getDay()).map((m) => ({ c, s: hm(m.start), e: hm(m.end) })));
+  const forLine = (sl: Slot) => { const L = liveLinks(sl.id, data.links, byId); return L.length ? "For: " + L.map((x) => x.title).join(", ") : ""; };
+  const openBlock = (sl: Slot) => setBlock({ course: sl.course, key: sl.key, s: sl.s, e: sl.e, id: sl.id });
+  const open = (id: string) => setSelected(id);
+
+  // ----- titles and navigation -----
+  const monthDate = addMonths(new Date(now.getFullYear(), now.getMonth(), 1), off.month);
+  const weekStart = addDays(monday(now), 7 * off.week);
+  const dayDate = addDays(now, off.day);
+  const fd = (x: Date) => fmtDay(x, { month: "short", day: "numeric" });
+  const title = view === "day" ? fmtDay(dayDate, { weekday: "long", month: "long", day: "numeric", year: "numeric" })
+    : view === "month" ? fmtDay(monthDate, { month: "long", year: "numeric" })
+      : fd(weekStart) + " to " + fd(addDays(weekStart, 6)) + ", " + addDays(weekStart, 6).getFullYear();
+  const step = (n: number) => { setOff((o) => ({ ...o, [view]: o[view] + n })); setOpenDay(null); setStudyTab(0); bump(); };
+  const notOnToday = off[view] !== 0;
+  const unit = view === "day" ? "day" : view === "month" ? "month" : "week";
+
+  // hidden count (items filtered out by Show)
+  const rangeDays = view === "month"
+    ? Array.from({ length: 42 }, (_, k) => addDays(monday(monthDate), k)).filter((d) => d.getMonth() === monthDate.getMonth())
+    : view === "week" ? Array.from({ length: 7 }, (_, k) => addDays(weekStart, k)) : [];
+  const hidden = rangeDays.reduce((n, d) => n + itemsOn(d).filter((it) => pass(it.course) && !passShow(it)).length, 0);
+
+  const zBtn = (offd: boolean) => "width: 32px; height: 32px; padding: 0; border: 0; border-radius: 16px; background: transparent; display: flex; align-items: center; justify-content: center; " + (offd ? "color: var(--muted); opacity: 0.45; cursor: default;" : "color: var(--text); cursor: pointer;");
+  const zoom = ZOOMS[zoomIdx] ?? 1;
+  const sel = selected ? byId.get(selected) : undefined;
+
   return (
-    <>
-      <PageHeader title="Calendar" sub={`${format(week, "MMM d")} – ${format(addDays(week, 6), "MMM d, yyyy")}`}
-        right={<div className="flex items-center gap-1">
-          <Button variant="quiet" aria-label="Previous week" onClick={() => setWeek(addWeeks(week, -1))}><Icon name="left" /></Button>
-          <Button onClick={() => setWeek(startOfWeek(new Date()))}>Today</Button>
-          <Button variant="quiet" aria-label="Next week" onClick={() => setWeek(addWeeks(week, 1))}><Icon name="right" /></Button>
-        </div>} />
+    <div className="anim-page" style={sx("display: flex; flex-direction: column; gap: 16px;")}>
       <ErrorNote error={data.error} />
-
-      <div className="mb-4 grid gap-4 lg:grid-cols-2">
-        <Overview items={data.items} days={days} onOpen={setOpenItem} />
-        <AiSummary days={days} />
+      {/* toolbar */}
+      <div style={sx("position: relative; z-index: 30; display: flex; flex-wrap: wrap; align-items: center; gap: 10px;")}>
+        <div role="group" aria-label="View" className="frost" style={sx("display: flex; padding: 3px; border-radius: 22px; border: 1px solid var(--line-strong); background: var(--surface);")}>
+          {(["day", "week", "month"] as const).map((v) => (
+            <button key={v} type="button" onClick={() => { set({ view: v }); bump(); }} aria-pressed={view === v} style={sx(pill(view === v))}>{v[0]!.toUpperCase() + v.slice(1)}</button>
+          ))}
+        </div>
+        <div className="frost" style={sx("flex: 1 1 420px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-height: 44px; padding: 3px 3px 3px 8px; box-sizing: border-box; border-radius: 22px; border: 1px solid var(--line-strong); background: var(--surface);")}>
+          <div role="group" aria-label="Filter by class" style={sx("flex: 1 1 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 4px;")}>
+            {[{ k: "all", label: "All classes", c: null as Course | null }, ...data.courses.map((c) => ({ k: c.id, label: c.code, c }))].map((f) => (
+              <button key={f.k} type="button" onClick={() => { setFilter(f.k); bump(); }} aria-pressed={filter === f.k} style={sx(pill(filter === f.k))}>
+                {f.c && <span aria-hidden="true" style={sx(dotStyle(f.c))} />}{f.label}
+              </button>
+            ))}
+          </div>
+          <span aria-hidden="true" style={sx("width: 1px; height: 24px; background: var(--line-strong); margin: 0 4px;")} />
+          <div style={sx("position: relative;")}>
+            <button type="button" onClick={() => setShowMenu(!showMenu)} aria-haspopup="true" aria-expanded={showMenu} aria-controls="show-menu"
+              style={sx("display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 12px; border: 0; border-radius: 18px; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap; " + (showMenu || show !== "todo" || !studyShown ? "background: var(--surface-3); color: var(--text);" : "background: transparent; color: var(--text-2);"))}>
+              <Ico d={P.filter} size={15} />
+              <span>Show: {{ all: "Everything", todo: "To do", done: "Done", none: "No assignments" }[show]}{studyShown ? "" : ", no study time"}</span>
+              <Ico d={P.chevron} size={13} sw={2.4} style={"transition: transform .25s ease;" + (showMenu ? " transform: rotate(180deg);" : "")} />
+            </button>
+            {showMenu && (
+              <>
+                <div aria-hidden="true" onClick={() => setShowMenu(false)} style={sx("position: fixed; inset: 0; z-index: 38;")} />
+                <div id="show-menu" className="anim-pop" style={sx("position: absolute; right: 0; top: calc(100% + 8px); z-index: 40; width: 300px; max-width: calc(100vw - 32px); box-sizing: border-box; padding: 12px; display: flex; flex-direction: column; gap: 10px; border-radius: 16px; background: var(--panel); border: 1px solid var(--line-strong); box-shadow: var(--shadow); color: var(--text); transform-origin: top right;")}>
+                  <p style={sx("margin: 0; font-size: 12px; line-height: 1.45; color: var(--text-2);")}>Choose what shows on your calendar. The class buttons on the left still pick which classes.</p>
+                  <span id="show-items-label" style={sx("font-size: 11px; font-weight: 800; color: var(--muted);")}>Assignments</span>
+                  <div role="radiogroup" aria-labelledby="show-items-label" style={sx("display: flex; flex-direction: column; gap: 4px;")}>
+                    {SHOW_OPTS.map(([k, label, desc]) => (
+                      <button key={k} type="button" role="radio" aria-checked={show === k} onClick={() => { setShow(k); bump(); }}
+                        style={sx("display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; box-sizing: border-box; border-radius: 10px; border: 0; color: var(--text); cursor: pointer; " + (show === k ? "background: var(--surface-3);" : "background: transparent;"))}>
+                        <span style={sx("flex: 1 1 auto; display: flex; flex-direction: column; gap: 1px; text-align: left;")}>
+                          <span style={sx("font-size: 13px; font-weight: 700;")}>{label}</span>
+                          <span style={sx("font-size: 12px; color: var(--text-2);")}>{desc}</span>
+                        </span>
+                        {show === k && <Ico d={P.check} size={15} sw={2.6} />}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={sx("height: 1px; background: var(--line);")} />
+                  <button type="button" role="switch" aria-checked={studyShown} onClick={() => { setStudyShown(!studyShown); bump(); }}
+                    style={sx("display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; box-sizing: border-box; border-radius: 10px; border: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer;")}>
+                    <span style={sx("flex: 1 1 auto; display: flex; flex-direction: column; gap: 1px;")}>
+                      <span style={sx("font-size: 13px; font-weight: 700;")}>Study time</span>
+                      <span style={sx("font-size: 12px; color: var(--text-2);")}>Class-colored blocks of time set aside to study</span>
+                    </span>
+                    <SwitchTrack on={studyShown} />
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       </div>
 
-      <div className="mb-3 flex flex-wrap items-center gap-2 text-xs font-bold">
-        {(Object.keys(KIND_LABEL) as Kind[]).map((k) => (
-          <button key={k} aria-pressed={show[k]} onClick={() => setShow({ ...show, [k]: !show[k] })}
-            className={`flex items-center gap-1.5 rounded-full border px-3 py-1 ${show[k] ? "border-text-2 text-text" : "border-line text-muted line-through"}`}>
-            <Icon name={k === "due" ? "alarm" : k === "study" ? "book" : "school"} size={14} />{KIND_LABEL[k]}
-          </button>
-        ))}
-        <span className="mx-1 h-4 w-px bg-line" />
-        {data.courses.map((c) => (
-          <button key={c.id} aria-pressed={!hidden.includes(c.id)} onClick={() => setHidden(hidden.includes(c.id) ? hidden.filter((x) => x !== c.id) : [...hidden, c.id])}
-            className={`flex items-center gap-1.5 rounded-full border px-3 py-1 ${hidden.includes(c.id) ? "border-line text-muted line-through" : "border-text-2"}`}>
-            <Dot color={c.color} />{c.code}
-          </button>
-        ))}
-      </div>
-
-      <div className="grid gap-2 md:grid-cols-7">
-        {days.map((d, i) => (
-          <div key={d.toISOString()} className={`min-h-[180px] rounded-xl border border-line p-2 ${isToday(d) ? "bg-[var(--today)]" : "bg-surface"}`}>
-            <p className={`mb-2 text-xs font-extrabold ${d.getDay() === 0 || d.getDay() === 6 ? "text-[var(--weekend)]" : "text-text-2"}`}>
-              {format(d, "EEE")} <span className="text-base text-text">{format(d, "d")}</span>
-            </p>
-            <div className="space-y-1.5">
-              {(byDay[i] ?? []).map((e) => <EventChip key={e.id} e={e} onClick={() => (e.kind === "due" ? setOpenItem(e.item.id) : e.kind === "study" ? setOpenBlock({ id: e.id, day: d }) : undefined)} />)}
+      <div style={sx("display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start;")}>
+        <section style={sx("flex: 999 1 700px; min-width: 0; display: flex; flex-direction: column; gap: 10px;")}>
+          <div className="cal-head" style={sx("display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 8px;")}>
+            <div style={sx("display: flex; align-items: center; gap: 4px;")}>
+              <button type="button" onClick={() => step(-1)} aria-label={`Previous ${unit}`} title={`Previous ${unit}`} style={sx("width: 40px; height: 40px; border: 0; border-radius: 20px; background: transparent; color: var(--text); cursor: pointer; display: flex; align-items: center; justify-content: center;")}><Ico d={P.left} size={18} /></button>
+              {notOnToday && <button type="button" onClick={() => { setOff({ day: 0, week: 0, month: 0 }); bump(); }} style={sx("min-height: 32px; padding: 0 12px; border-radius: 16px; border: 1px solid var(--line-strong); background: transparent; color: var(--text); font-size: 12px; font-weight: 700; cursor: pointer;")}>Today</button>}
+            </div>
+            <h1 className="on-bg" style={sx("margin: 0; display: flex; align-items: baseline; gap: 8px; font-size: 22px; font-weight: 800; letter-spacing: -0.01em; white-space: nowrap;")}>
+              {title}
+              {view !== "day" && hidden > 0 && <span style={sx("font-size: 14px; font-weight: 700; color: var(--muted);")}>+{hidden} hidden</span>}
+            </h1>
+            <div style={sx("display: flex; justify-content: flex-end; align-items: center; gap: 6px;")}>
+              <div role="group" aria-label="Calendar size" className="frost cal-zoom" style={sx("display: flex; align-items: center; padding: 3px; border-radius: 20px; border: 1px solid var(--line-strong); background: var(--surface);")}>
+                <button type="button" onClick={() => set({ zoomIdx: Math.max(0, zoomIdx - 1) })} disabled={zoomIdx === 0} aria-label="Make calendar smaller" title="Smaller" style={sx(zBtn(zoomIdx === 0))}><Ico d={P.minus} size={16} sw={2.2} /></button>
+                <button type="button" onClick={() => set({ zoomIdx: 2 })} aria-label="Reset calendar size" title="Reset size" style={sx("min-width: 54px; height: 32px; border: 0; border-radius: 16px; background: transparent; color: var(--text); font-size: 12px; font-weight: 700; cursor: pointer;")}>{Math.round(zoom * 100)}%</button>
+                <button type="button" onClick={() => set({ zoomIdx: Math.min(ZOOMS.length - 1, zoomIdx + 1) })} disabled={zoomIdx === ZOOMS.length - 1} aria-label="Make calendar bigger" title="Bigger" style={sx(zBtn(zoomIdx === ZOOMS.length - 1))}><Ico d={P.plus} size={16} sw={2.2} /></button>
+              </div>
+              <button type="button" onClick={() => step(1)} aria-label={`Next ${unit}`} title={`Next ${unit}`} style={sx("width: 40px; height: 40px; border: 0; border-radius: 20px; background: transparent; color: var(--text); cursor: pointer; display: flex; align-items: center; justify-content: center;")}><Ico d={P.right} size={18} /></button>
             </div>
           </div>
-        ))}
+
+          {view === "month" && (
+            <MonthView key={"m" + tick} monthDate={monthDate} zoom={zoom} todayKey={todayKey} anim={anim} openDay={openDay} setOpenDay={setOpenDay}
+              itemsOn={(d) => itemsOn(d).filter(visible)} slots={slots} classesOn={classesOn} open={open} openBlock={openBlock} />
+          )}
+          {view === "week" && (
+            <WeekView key={"w" + tick} weekStart={weekStart} zoom={zoom} todayKey={todayKey} anim={anim} expanded={expanded} setExpanded={setExpanded}
+              itemsOn={(d) => itemsOn(d).filter(visible)} slots={slots} classesOn={classesOn} forLine={forLine} open={open} openBlock={openBlock} />
+          )}
+          {view === "day" && (
+            <DayView key={"d" + tick} d={dayDate} zoom={zoom} now={now} todayKey={todayKey} anim={anim} studyTab={studyTab} setStudyTab={setStudyTab}
+              items={itemsOn(dayDate).filter(visible)} allItems={all} slots={slots(dayDate)} classes={classesOn(dayDate)} forLine={forLine} open={open} openBlock={openBlock} />
+          )}
+
+          <div aria-label="Calendar key" className="frost" style={sx("display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; padding: 12px 16px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); font-size: 13px; font-weight: 600; color: var(--text);")}>
+            <span style={sx("font-weight: 800; color: var(--text);")}>Key</span>
+            <span style={sx("display: inline-flex; align-items: center; gap: 9px;")}><span aria-hidden="true" style={sx("display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; box-sizing: border-box; border-radius: 6px; background: var(--panel); border: 1px solid var(--line-strong); color: var(--text); font-size: 11px; font-weight: 800;")}><Ico d={ALARM} size={13} sw={2.2} />Due</span>Assignment, at its due time</span>
+            <span style={sx("display: inline-flex; align-items: center; gap: 9px;")}><span aria-hidden="true" style={sx("display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; box-sizing: border-box; border-radius: 6px; background: var(--c1-block); border: 1px solid var(--c1-soft); color: var(--text); font-size: 11px; font-weight: 800;")}><Ico d={BOOK} size={13} />Study</span>Study time, filled in the class color</span>
+            <span style={sx("display: inline-flex; align-items: center; gap: 9px;")}><span aria-hidden="true" style={sx("display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; box-sizing: border-box; border-radius: 6px; background: var(--class-bg); border: 1px solid var(--c1); border-left: 3px solid var(--c1); color: var(--text); font-size: 11px; font-weight: 800;")}><Ico d={SCHOOL} size={13} />Class</span>In-person class, outlined in the class color</span>
+          </div>
+        </section>
+
+        <aside style={sx("flex: 1 1 290px; min-width: 0; display: flex; flex-direction: column; gap: 12px;")}>
+          <AiSummary items={all} courses={data.courses} studyTimes={data.studyTimes} />
+          <Overview items={all} courses={data.courses} studyTimes={data.studyTimes} onOpen={open} />
+        </aside>
       </div>
 
-      {item && <ItemDialog item={item} code={data.courses.find((c) => c.id === item.course_id)?.code ?? ""} onClose={() => setOpenItem(null)} />}
-      {block?.kind === "study" && <BlockDialog block={block} day={openBlock!.day} items={data.items} onClose={() => setOpenBlock(null)} />}
-    </>
+      {sel && <ItemDetail key={sel.id} it={sel} onClose={() => setSelected(null)} />}
+      {block && !sel && <BlockDialog sel={block} items={all} links={data.links} onClose={() => setBlock(null)} onOpenItem={open} />}
+    </div>
   );
 }
 
-function EventChip({ e, onClick }: { e: CalEvent; onClick: () => void }) {
-  const color = e.course.color;
-  if (e.kind === "class") {
-    return (
-      <div className="rounded-lg border px-2 py-1.5 text-xs" style={{ borderColor: `var(--${color})`, borderLeftWidth: 4, background: "var(--class-bg)" }}>
-        <p className="flex items-center gap-1 font-extrabold"><Icon name="school" size={13} />{e.course.code}</p>
-        <p className="text-text-2">{timeLabel(e.start)}–{timeLabel(e.end)}</p>
-      </div>
-    );
-  }
-  if (e.kind === "study") {
-    return (
-      <button onClick={onClick} className="block w-full rounded-lg px-2 py-1.5 text-left text-xs hover:brightness-110" style={{ background: `var(--${color}-block)` }}>
-        <p className="flex items-center gap-1 font-extrabold"><Icon name="book" size={13} />Study {e.course.code}</p>
-        <p className="text-text-2">{timeLabel(e.start)}–{timeLabel(e.end)}</p>
-        {e.studyFor.length > 0 && <p className="mt-0.5 line-clamp-2 font-bold">For: {e.studyFor.map((i) => i.title).join(", ")}</p>}
-      </button>
-    );
-  }
-  const done = e.item.status === "done";
-  return (
-    <button onClick={onClick} className={`flex w-full items-start gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-surface-2 ${done ? "opacity-55" : ""}`}
-      style={{ background: `var(--${color}-soft)` }}>
-      <Icon name={done ? "check" : "alarm"} size={13} className="mt-0.5 shrink-0" />
-      <span className={`font-bold ${done ? "line-through" : ""}`}>{e.item.title}</span>
-    </button>
-  );
-}
+// ---------- Month ----------
 
-function Overview({ items, days, onOpen }: { items: Item[]; days: Date[]; onOpen: (id: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const from = startOfDay(days[0] ?? new Date()), to = endOfDay(days[6] ?? new Date());
-  const now = new Date();
-  const live = items.filter((i) => !i.deleted_at && i.due_at);
-  const week = live.filter((i) => { const t = new Date(i.due_at!); return t >= from && t <= to; });
-  const done = week.filter((i) => i.status === "done").length;
-  const overdue = live.filter((i) => i.status !== "done" && new Date(i.due_at!) < now).length;
-  const pct = week.length ? Math.round((done / week.length) * 100) : 0;
+function MonthView({ monthDate, zoom, todayKey, anim, openDay, setOpenDay, itemsOn, slots, classesOn, open, openBlock }: {
+  monthDate: Date; zoom: number; todayKey: string; anim: string; openDay: string | null; setOpenDay: (k: string | null) => void;
+  itemsOn: (d: Date) => PlanItem[]; slots: (d: Date) => Slot[]; classesOn: (d: Date) => { c: Course; s: number; e: number }[];
+  open: (id: string) => void; openBlock: (sl: Slot) => void;
+}) {
+  const lead = (monthDate.getDay() + 6) % 7;
+  const daysIn = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0).getDate();
+  const count = Math.ceil((lead + daysIn) / 7) * 7;
+  const cells = Array.from({ length: count }, (_, k) => new Date(monthDate.getFullYear(), monthDate.getMonth(), 1 - lead + k));
 
   return (
-    <Card className="p-4">
-      <button className="flex w-full items-center justify-between text-left" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <h2 className="font-extrabold">Overview <span className="text-text-2">· {week.length} due this week</span></h2>
-        <Icon name={open ? "x" : "right"} size={16} />
-      </button>
-      {!open && (
-        <div className="mt-3 space-y-2">
-          <p className="text-sm font-bold">{done} of {week.length} done</p>
-          <div className="h-1.5 overflow-hidden rounded-full bg-surface-3"><div className="h-full bg-ok" style={{ width: `${pct}%` }} /></div>
-          {overdue > 0 && <span className="inline-block rounded-full bg-warn-bg px-2.5 py-0.5 text-xs font-bold text-warn">{overdue} overdue</span>}
+    <div className="anim-view cal-scroll" style={sx("overflow: auto; max-height: calc(100vh - 230px); min-height: 360px; padding: 0 10px 4px; margin: 0 -10px; overscroll-behavior: contain;")}>
+      <div style={sx(`min-width: 760px; zoom: ${zoom};`)}>
+        <div style={sx("position: sticky; top: 0; z-index: 7; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; padding: 8px 0; margin-bottom: 4px; border-bottom: 1px solid var(--line-strong); background: var(--rail-bg); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);")}>
+          {HEADS.map((h, i) => <span key={h} style={sx("text-shadow: var(--onbg-shadow, none); text-align: center; font-size: 13px; font-weight: 800; letter-spacing: 0.04em; color: " + (i >= 5 ? "var(--weekend)" : "var(--text-2)") + ";")}>{h}</span>)}
         </div>
-      )}
-      {open && (
-        <ul className="mt-3 space-y-1">
-          {week.map((i) => (
-            <li key={i.id}>
-              <button onClick={() => onOpen(i.id)} className={`flex w-full justify-between gap-2 rounded px-2 py-1 text-left text-sm hover:bg-surface-2 ${i.status === "done" ? "text-muted line-through" : ""}`}>
-                <span className="font-bold">{i.title}</span><span className="shrink-0 text-xs text-text-2">{shortDue(i.due_at!)}</span>
-              </button>
-            </li>
-          ))}
-          {!week.length && <li className="text-sm text-text-2">Nothing due this week.</li>}
-        </ul>
-      )}
-    </Card>
-  );
-}
-
-function AiSummary({ days }: { days: Date[] }) {
-  const { courses, items, studyTimes } = useAll();
-  const first = days[0] ?? new Date();
-  const run = useMutation({
-    mutationFn: () => {
-      const from = startOfDay(first), to = endOfDay(days[6] ?? first);
-      const code = new Map(courses.map((c) => [c.id, c.code]));
-      const week = items.filter((i) => !i.deleted_at && i.due_at && new Date(i.due_at) >= from && new Date(i.due_at) <= to);
-      const hours: Record<string, number> = {};
-      for (const s of studyTimes) {
-        const c = code.get(s.course_id); if (!c) continue;
-        const [sh = 0, sm = 0] = s.start_time.split(":").map(Number), [eh = 0, em = 0] = s.end_time.split(":").map(Number);
-        hours[c] = (hours[c] ?? 0) + (eh * 60 + em - sh * 60 - sm) / 60;
-      }
-      // Only titles, types, and dates go to the AI. No names or notes.
-      return api("/summary", summarySchema, {
-        range: "week", today: format(new Date(), "yyyy-MM-dd"), study_hours: hours,
-        items: week.map((i) => ({ id: i.id, title: i.title, course_code: code.get(i.course_id) ?? "", type: i.type, due_at: i.due_at, done: i.status === "done" })),
-      });
-    },
-  });
-
-  return (
-    <Card className="p-4">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="flex items-center gap-2 font-extrabold"><Icon name="sparkle" className="text-[var(--c3)]" />AI summary</h2>
-        <Button variant="quiet" onClick={() => run.mutate()} disabled={run.isPending}>{run.isPending ? "Thinking…" : run.data ? "Refresh" : "Summarize this week"}</Button>
-      </div>
-      {run.data && (
-        <div className="mt-2">
-          <p className="text-sm font-bold">{run.data.headline}</p>
-          <ul className="mt-2 space-y-1 text-sm">
-            {run.data.bullets.map((b, n) => <li key={n} className={`flex gap-2 ${b.priority === "high" ? "font-bold text-warn" : "text-text-2"}`}><span>•</span>{b.text}</li>)}
-          </ul>
+        <div style={sx("display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px;")}>
+          {cells.map((d) => {
+            const key = dayKey(d); const isToday = key === todayKey; const inMonth = d.getMonth() === monthDate.getMonth();
+            const vis = itemsOn(d); const sl = slots(d); const cl = classesOn(d);
+            const has = vis.length > 0 || sl.length > 0;
+            const isOpen = openDay === key && has;
+            const pop = fmtDay(d, { weekday: "short", month: "short", day: "numeric" });
+            return (
+              <div key={key} style={sx("position: relative; min-height: 120px; box-sizing: border-box; padding: 8px; display: flex; flex-direction: column; gap: 5px; border-radius: 6px; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); " + (isToday ? "background: var(--today);" : "background: var(--surface);") + (isOpen ? " z-index: 5;" : ""))}>
+                <div style={sx("display: flex; align-items: center; gap: 4px;")}>
+                  <span style={sx("font-size: 15px; font-weight: 800; color: " + (!inMonth ? "var(--muted)" : d.getDay() === 0 ? "var(--weekend)" : "var(--text)") + ";" + (key < todayKey && !isToday ? " opacity: 0.7;" : ""))}>{d.getDate()}</span>
+                  {isToday && <span role="img" aria-label="Today" style={sx("width: 5px; height: 5px; border-radius: 50%; background: var(--text);")} />}
+                  <span style={sx("flex-grow: 1;")} />
+                  {has && (
+                    <>
+                      {vis.length > 0 && <span style={sx("font-size: 12px; font-weight: 600; color: var(--muted); margin-right: 2px;")}>{vis.length}</span>}
+                      <button type="button" onClick={() => setOpenDay(key)} aria-label={"Show all items for " + fmtDay(d, { month: "long", day: "numeric" })}
+                        style={sx("width: 24px; height: 24px; padding: 0; border: 0; border-radius: 12px; background: transparent; color: var(--text); cursor: pointer; display: flex; align-items: center; justify-content: center;")}><Ico d={P.expand} size={14} sw={2.2} /></button>
+                    </>
+                  )}
+                </div>
+                {vis.slice(0, 2).map((it) => { const cd = cardOf(it, anim); return (
+                  <button key={it.id} type="button" onClick={() => open(it.id)} aria-label={cd.aria} title={cd.full} className="lift" style={sx(cd.style)}>
+                    <span aria-hidden="true" style={sx(cd.iconWrap)}><Ico d={cd.icon} size={12} /></span>
+                    <span className="clamp" style={sx(cd.textStyle)}>{it.title}</span>
+                    <Ico d={ALARM} size={12} style="flex-shrink: 0; margin-left: auto; color: var(--text);" />
+                  </button>
+                ); })}
+                {cl.map((x, n) => (
+                  <div key={n} style={sx(`display: flex; align-items: center; gap: 5px; padding: 3px 7px; border-radius: 7px; background: var(--class-bg); border: 1px solid ${col(x.c)}; border-left: 3px solid ${col(x.c)};`)}>
+                    <Ico d={SCHOOL} size={11} style="flex-shrink: 0;" />
+                    <span style={sx("flex: 1 1 auto; font-size: 10px; font-weight: 800;")}>{x.c.code} class</span>
+                    <span style={sx("font-size: 10px; font-weight: 700; color: var(--text-2); white-space: nowrap;")}>{fmtT(x.s).replace(":00", "")}</span>
+                  </div>
+                ))}
+                {sl.map((s) => { const st = slotStyles(s, anim); return (
+                  <button key={s.id} type="button" onClick={() => openBlock(s)} aria-label={`${s.course.code} study time, ${st.time}. Open to see what is due.`} className="lift" style={sx(st.chipStyle)}>
+                    <Ico d={BOOK} size={11} style="flex-shrink: 0;" />
+                    <span style={sx("flex: 1 1 auto; font-size: 10px; font-weight: 800;")}>{s.course.code}</span>
+                    <span style={sx("font-size: 10px; font-weight: 700; color: var(--text-2); white-space: nowrap;")}>{st.short}</span>
+                  </button>
+                ); })}
+                {isOpen && (
+                  <div role="dialog" aria-label={pop} className="anim-pop" style={sx("position: absolute; top: -6px; left: -10px; right: -10px; z-index: 8; display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line-strong); box-shadow: var(--shadow); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);")}>
+                    <div style={sx("display: flex; align-items: center; justify-content: space-between; padding: 0 2px 4px;")}>
+                      <span style={sx("font-size: 13px; font-weight: 800; color: var(--weekend);")}>{pop}</span>
+                      <button type="button" onClick={() => setOpenDay(null)} aria-label="Close" title="Close" style={sx("width: 28px; height: 28px; padding: 0; border: 0; border-radius: 14px; background: transparent; color: var(--text); cursor: pointer; display: flex; align-items: center; justify-content: center;")}><Ico d={P.x} size={14} sw={2.6} /></button>
+                    </div>
+                    {vis.map((it) => { const cd = cardOf(it, ""); return (
+                      <button key={it.id} type="button" onClick={() => open(it.id)} aria-label={cd.aria} className="lift" style={sx(cd.popStyle)}>
+                        <span aria-hidden="true" style={sx(cd.iconWrap)}><Ico d={cd.icon} size={12} /></span>
+                        <span style={sx("display: flex; flex-direction: column; gap: 1px; min-width: 0;")}>
+                          <span style={sx("font-size: 10px; font-weight: 800; color: var(--muted);")}>{it.course.code}</span>
+                          <span style={sx(cd.textStyle)}>{it.title}</span>
+                        </span>
+                      </button>
+                    ); })}
+                    {sl.map((s) => { const st = slotStyles(s, ""); return (
+                      <button key={s.id} type="button" onClick={() => openBlock(s)} aria-label={`${s.course.code} study time, ${st.time}`} className="lift" style={sx(st.chipStyle)}>
+                        <Ico d={BOOK} size={12} style="flex-shrink: 0;" />
+                        <span style={sx("flex: 1 1 auto; font-size: 11px; font-weight: 800;")}>{s.course.code} study time</span>
+                        <span style={sx("font-size: 11px; font-weight: 700; color: var(--text-2); white-space: nowrap;")}>{st.time}</span>
+                      </button>
+                    ); })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
-      )}
-      {!run.data && !run.isPending && <p className="mt-2 text-sm text-text-2">A short read on what matters this week. Uses only titles and dates.</p>}
-      <ErrorNote error={run.error} />
-    </Card>
+      </div>
+    </div>
   );
 }
 
-function ItemDialog({ item, code, onClose }: { item: Item; code: string; onClose: () => void }) {
-  const update = useUpdateItem();
-  const nav = useNavigate();
-  const done = item.status === "done";
+/** Week and Day views open scrolled to midday, so evening due times are in view. */
+function useStartAtNoon(hourPx: number, zoom: number) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (ref.current) ref.current.scrollTop = 5 * hourPx * zoom; }, [hourPx, zoom]);
+  return ref;
+}
+
+// ---------- Week ----------
+
+const H = 44;
+const pos = (s: number, e: number) => `top: ${(Math.max(7, s) - 7) * H + 2}px; height: ${(Math.min(24, e) - Math.max(7, s)) * H - 4}px;`;
+/** left/width so overlapping study blocks sit side by side */
+const lane = (cols: Map<string, [number, number]>, id: string, pad: number) => {
+  const [c, n] = cols.get(id) ?? [0, 1];
+  return n === 1 ? `left: ${pad}px; right: ${pad}px;` : `left: calc(${pad}px + (100% - ${pad * 2}px) * ${c / n}); width: calc((100% - ${pad * 2}px) / ${n} - 2px);`;
+};
+const dueAnchor = (t: number, h: number) => (t >= 21 ? "bottom: " + Math.max(4, (24 - t) * h) + "px;" : "top: " + (Math.max(0, t - 7) * h + 2) + "px;");
+
+function groups(items: PlanItem[]): [number, PlanItem[]][] {
+  const g = new Map<number, PlanItem[]>();
+  items.forEach((it) => g.set(it.time, [...(g.get(it.time) ?? []), it]));
+  return [...g.entries()].sort((a, b) => a[0] - b[0]);
+}
+
+function WeekView({ weekStart, zoom, todayKey, anim, expanded, setExpanded, itemsOn, slots, classesOn, forLine, open, openBlock }: {
+  weekStart: Date; zoom: number; todayKey: string; anim: string; expanded: Record<string, boolean>; setExpanded: (f: (e: Record<string, boolean>) => Record<string, boolean>) => void;
+  itemsOn: (d: Date) => PlanItem[]; slots: (d: Date) => Slot[]; classesOn: (d: Date) => { c: Course; s: number; e: number }[];
+  forLine: (sl: Slot) => string; open: (id: string) => void; openBlock: (sl: Slot) => void;
+}) {
+  const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+  const scroller = useStartAtNoon(H, zoom);
+  const bg = (today: boolean) => "backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); background-color: " + (today ? "var(--today)" : "var(--surface)") + ";";
   return (
-    <Dialog open title={item.title} onClose={onClose}
-      footer={<>
-        <Button variant="quiet" onClick={() => nav("/review")}>Edit in Review</Button>
-        <Button variant="primary" onClick={() => { update.mutate({ id: item.id, patch: { status: done ? "todo" : "done" } }); onClose(); }}>
-          {done ? "Mark not done" : "Mark done"}
-        </Button>
-      </>}>
-      <p className="font-bold text-text">{code} · {TYPE_LABEL[item.type]}</p>
-      {item.due_at && <p className="mt-1">Due {format(new Date(item.due_at), "EEEE, MMM d 'at' h:mm a")}</p>}
-      {done && <p className="mt-2 font-bold text-ok">Done. It stays on your calendar with a check and no reminders.</p>}
-    </Dialog>
+    <div ref={scroller} className="anim-view cal-scroll" style={sx("overflow: auto; max-height: calc(100vh - 230px); min-height: 360px; border-radius: 12px; overscroll-behavior: contain;")}>
+      <div style={sx(`min-width: 860px; zoom: ${zoom};`)}>
+        <div style={sx("position: sticky; top: 0; z-index: 7; display: grid; grid-template-columns: 56px repeat(7, minmax(0, 1fr)); border-bottom: 1px solid var(--line-strong); background: var(--rail-bg);")}>
+          <div style={sx(bg(false))} />
+          {days.map((d, i) => { const today = dayKey(d) === todayKey; return (
+            <div key={i} style={sx("display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0; border-left: 1px solid var(--line); " + bg(today))}>
+              <span style={sx("text-shadow: var(--onbg-shadow, none); font-size: 12px; font-weight: 800; letter-spacing: 0.04em; color: " + (i >= 5 ? "var(--weekend)" : "var(--text-2)") + ";")}>{HEADS[i]}</span>
+              <span style={sx("width: 34px; height: 34px; border-radius: 17px; font-size: 16px; font-weight: 800; display: flex; align-items: center; justify-content: center; " + (today ? "background: var(--today); color: var(--text);" : i === 6 ? "color: var(--weekend);" : "color: var(--text);"))}>{d.getDate()}</span>
+            </div>
+          ); })}
+        </div>
+        <div style={sx("display: grid; grid-template-columns: 56px repeat(7, minmax(0, 1fr));")}>
+          <div className="frost" style={sx("position: relative; height: 790px; background: var(--surface);")}>
+            {Array.from({ length: 17 }, (_, k) => k + 7).map((h) => (
+              <span key={h} style={sx(`position: absolute; right: 8px; top: ${Math.max(2, (h - 7) * H - 7)}px; font-size: 11px; font-weight: 600; color: var(--muted); white-space: nowrap;`)}>{fmtT(h).replace(":00", "")}</span>
+            ))}
+          </div>
+          {days.map((d, i) => {
+            const today = dayKey(d) === todayKey;
+            return (
+              <div key={i} style={sx("position: relative; height: 790px; border-left: 1px solid var(--line); " + bg(today) + " background-image: repeating-linear-gradient(to bottom, var(--line) 0, var(--line) 1px, transparent 1px, transparent 44px);")}>
+                {classesOn(d).map((x, n) => (
+                  <div key={n} style={sx(`position: absolute; left: 3px; right: 3px; ${pos(x.s, x.e)} box-sizing: border-box; overflow: hidden; padding: 5px 8px; display: flex; flex-direction: column; gap: 1px; border-radius: 9px; background: var(--class-bg); border: 1px solid ${col(x.c)}; border-left: 4px solid ${col(x.c)};`)}>
+                    <span style={sx("display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 800; color: var(--text);")}><Ico d={SCHOOL} size={11} style="flex-shrink: 0;" />{x.c.code} class</span>
+                    <span style={sx("font-size: 11px; color: var(--text-2);")}>{fmtT(x.s)} to {fmtT(x.e)}</span>
+                  </div>
+                ))}
+                {(() => { const ds = slots(d); const cols = overlapColumns(ds); return ds.map((s) => { const st = slotStyles(s, anim, `position: absolute; ${lane(cols, s.id, 3)} ${pos(s.s, s.e)}`); const fl = forLine(s); return (
+                  <button key={s.id} type="button" onClick={() => openBlock(s)} aria-label={`${s.course.code} study time, ${st.time}. Open to see what is due.`} className="lift" style={sx(st.style)}>
+                    <span style={sx("display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 800;")}><Ico d={BOOK} size={12} style="flex-shrink: 0;" />{s.course.code}</span>
+                    <span style={sx("font-size: 11px; font-weight: 600; color: var(--text-2);")}>{st.time}</span>
+                    {fl && <span style={sx("font-size: 11px; font-weight: 600; color: var(--text); line-height: 1.3; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;")}>{fl}</span>}
+                  </button>
+                ); }); })()}
+                {groups(itemsOn(d)).map(([t, list]) => {
+                  const gk = dayKey(d) + "|" + t; const isOpen = !!expanded[gk];
+                  const shown = list.length > 2 && !isOpen ? list.slice(0, 2) : list;
+                  return (
+                    <div key={t} style={sx("position: absolute; left: 3px; right: 3px; z-index: 3; display: flex; flex-direction: column; gap: 3px; " + dueAnchor(t, H))}>
+                      <span style={sx("font-size: 10px; font-weight: 800; color: var(--text); padding: 0 2px;")}>Due {fmtT(t)}</span>
+                      {shown.map((it) => { const cd = cardOf(it, anim); return (
+                        <button key={it.id} type="button" onClick={() => open(it.id)} aria-label={cd.aria} title={cd.full} className="lift" style={sx(cd.chip)}>
+                          <Ico d={ALARM} size={12} style="flex-shrink: 0; color: var(--text);" />
+                          <span aria-hidden="true" style={sx(cd.chipDot)} />
+                          <span style={sx(cd.chipText)}>{it.title}</span>
+                        </button>
+                      ); })}
+                      {list.length > 2 && (
+                        <button type="button" onClick={() => setExpanded((e) => ({ ...e, [gk]: !e[gk] }))} style={sx("min-height: 24px; border-radius: 7px; border: 1px dashed var(--line-strong); background: var(--panel); color: var(--text); font-size: 11px; font-weight: 700; cursor: pointer;")}>
+                          {isOpen ? "Show less" : `+${list.length - 2} more`}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
   );
 }
 
-function BlockDialog({ block, day, items, onClose }: { block: Extract<CalEvent, { kind: "study" }>; day: Date; items: Item[]; onClose: () => void }) {
-  const setLink = useSetLink();
-  const nav = useNavigate();
-  const linked = new Set(block.studyFor.map((i) => i.id));
-  const open = items.filter((i) => !i.deleted_at && i.status !== "done" && i.due_at);
+// ---------- Day ----------
 
-  const today = open.filter((i) => isSameDay(new Date(i.due_at!), day));
-  const later = useMemo(() => {
-    const groups = new Map<string, Item[]>();
-    for (let k = 1; k <= 7; k++) {
-      const d = addDays(day, k);
-      const list = open.filter((i) => i.course_id === block.course.id && isSameDay(new Date(i.due_at!), d));
-      if (list.length) groups.set(format(d, "EEEE, MMM d"), list);
+function DayView({ d, zoom, now, todayKey, anim, studyTab, setStudyTab, items, allItems, slots, classes, forLine, open, openBlock }: {
+  d: Date; zoom: number; now: Date; todayKey: string; anim: string; studyTab: number; setStudyTab: (n: number) => void;
+  items: PlanItem[]; allItems: PlanItem[]; slots: Slot[]; classes: { c: Course; s: number; e: number }[];
+  forLine: (sl: Slot) => string; open: (id: string) => void; openBlock: (sl: Slot) => void;
+}) {
+  const HD = 56;
+  const scroller = useStartAtNoon(HD, zoom);
+  const posD = (a: number, b: number) => `top: ${(Math.max(7, a) - 7) * HD + 2}px; height: ${(Math.min(24, b) - Math.max(7, a)) * HD - 4}px;`;
+  const key = dayKey(d); const isToday = key === todayKey;
+  const dayWord = isToday ? "today" : fmtDay(d, { weekday: "long" });
+  const nowH = now.getHours() + now.getMinutes() / 60;
+  const studyHrs = slots.reduce((n, s) => n + s.e - s.s, 0);
+  const dayCols = overlapColumns(slots);
+  const upcomingFor = (c: Course) => {
+    const out: PlanItem[] = [];
+    for (let k = 0; k < 7 && out.length < 3; k++) {
+      const kk = dayKey(addDays(d, k));
+      allItems.filter((it) => it.key === kk && it.course.id === c.id && !it.done).forEach((it) => { if (out.length < 3) out.push(it); });
     }
-    return groups;
-  }, [open, day, block.course.id]);
-
-  const Row = ({ it }: { it: Item }) => {
-    const on = linked.has(it.id);
+    return out;
+  };
+  const rowOf = (it: PlanItem, withDay: boolean) => {
+    const cd = cardOf(it, anim);
     return (
-      <li className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-surface-2">
-        <button aria-pressed={on} aria-label={on ? `Stop studying for ${it.title}` : `Study for ${it.title} in this block`}
-          onClick={() => setLink.mutate({ block_key: block.blockKey, item_id: it.id, on: !on })}
-          className={on ? "text-[var(--c8)]" : "text-muted hover:text-text"}><Icon name="star" filled={on} size={18} /></button>
-        <span className="flex-1 font-bold text-text">{it.title}</span>
-        <span className="text-xs">{TYPE_LABEL[it.type]}</span>
-      </li>
+      <button key={it.id} type="button" onClick={() => open(it.id)} aria-label={"Open " + cd.full} className="lift"
+        style={sx("display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; box-sizing: border-box; border-radius: 10px; border: 1px solid " + (it.overdue ? "var(--warn-line)" : "var(--line)") + "; background: var(--surface-2); color: var(--text); text-align: left; cursor: pointer; " + anim)}>
+        <span aria-hidden="true" style={sx(cd.iconWrap)}><Ico d={cd.icon} size={13} /></span>
+        <span style={sx("flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px;")}>
+          <span style={sx("font-size: 13px; font-weight: 700;" + (it.done ? " text-decoration: line-through; opacity: 0.6;" : ""))}>{it.title}</span>
+          <span style={sx("font-size: 12px; color: var(--text-2);")}>{it.course.code}, {it.type[0]!.toUpperCase() + it.type.slice(1)}, due {withDay ? fmtDay(new Date(it.key + "T12:00:00"), { weekday: "short" }) + " " : ""}{fmtT(it.time)}</span>
+        </span>
+        <span style={sx("flex-shrink: 0; font-size: 11px; font-weight: 800; color: " + (it.done ? "var(--ok)" : "var(--warn-text)") + ";")}>{it.done ? "Done" : it.overdue ? "Overdue" : ""}</span>
+      </button>
     );
   };
+  const cur = slots[Math.min(studyTab, Math.max(0, slots.length - 1))];
+  const nx = cur ? upcomingFor(cur.course) : [];
+  const navBtn = "width: 34px; height: 34px; flex-shrink: 0; padding: 0; border-radius: 17px; border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--text); display: flex; align-items: center; justify-content: center; " + (slots.length < 2 ? "opacity: 0.35; cursor: default;" : "cursor: pointer;");
+  const section = "box-sizing: border-box; padding: 16px; display: flex; flex-direction: column; gap: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px;";
 
   return (
-    <Dialog open wide title={`Study ${block.course.code} · ${format(day, "EEE, MMM d")}, ${timeLabel(block.start)}–${timeLabel(block.end)}`} onClose={onClose}
-      footer={<Button onClick={() => nav(`/study?c=${block.course.id}`)}>Edit {block.course.code} study time</Button>}>
-      <p className="mb-3">Star what you'll work on. It shows on the block and in the event notes when you sync.</p>
-      <h3 className="mb-1 font-extrabold text-text">Due today</h3>
-      {today.length ? <ul>{today.map((it) => <Row key={it.id} it={it} />)}</ul> : <p className="mb-2">Nothing due that day.</p>}
-      {[...later.entries()].map(([label, list]) => (
-        <div key={label} className="mt-3">
-          <h3 className="mb-1 font-extrabold text-text">{label}</h3>
-          <ul>{list.map((it) => <Row key={it.id} it={it} />)}</ul>
+    <div className="anim-view" style={sx("display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start;")}>
+      <div ref={scroller} className="cal-scroll" style={sx("flex: 999 1 420px; min-width: 0; overflow: auto; max-height: calc(100vh - 230px); min-height: 360px; border-radius: 12px; overscroll-behavior: contain;")}>
+        <div style={sx(`display: grid; grid-template-columns: 64px minmax(0, 1fr); min-width: 360px; zoom: ${zoom};`)}>
+          <div className="frost" style={sx("position: relative; height: 952px; background: var(--surface);")}>
+            {Array.from({ length: 17 }, (_, k) => k + 7).map((h) => (
+              <span key={h} style={sx(`position: absolute; right: 10px; top: ${Math.max(2, (h - 7) * HD - 7)}px; font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap;`)}>{fmtT(h).replace(":00", "")}</span>
+            ))}
+          </div>
+          <div style={sx(`position: relative; height: 952px; border-left: 1px solid var(--line); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); background-color: var(--surface); background-image: repeating-linear-gradient(to bottom, var(--line) 0, var(--line) 1px, transparent 1px, transparent ${HD}px);`)}>
+            {classes.map((x, n) => (
+              <div key={n} style={sx(`position: absolute; left: 6px; right: 6px; ${posD(x.s, x.e)} box-sizing: border-box; overflow: hidden; padding: 8px 12px; display: flex; flex-direction: column; gap: 2px; border-radius: 10px; background: var(--class-bg); border: 1px solid ${col(x.c)}; border-left: 4px solid ${col(x.c)};`)}>
+                <span style={sx("display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 800;")}><Ico d={SCHOOL} size={13} style="flex-shrink: 0;" />{x.c.code} class</span>
+                <span style={sx("font-size: 12px; color: var(--text-2);")}>{fmtT(x.s)} to {fmtT(x.e)}</span>
+              </div>
+            ))}
+            {slots.map((s) => {
+              const st = slotStyles(s, anim, `position: absolute; ${posD(s.s, s.e)} ${lane(dayCols, s.id, 6)}`);
+              const fl = forLine(s); const next = upcomingFor(s.course);
+              return (
+                <button key={s.id} type="button" onClick={() => openBlock(s)} aria-label={`${s.course.code} study time, ${st.time}. Open to see what is due.`} className="lift" style={sx(st.style)}>
+                  <span style={sx("display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 800;")}><Ico d={BOOK} size={15} style="flex-shrink: 0;" />{s.course.code} study time</span>
+                  <span style={sx("font-size: 12px; font-weight: 600; color: var(--text-2);")}>{st.time}</span>
+                  <span style={sx("font-size: 12px; color: var(--text);")}>{fl ? fl.replace("For: ", "Studying for: ") : next.length ? "Next up: " + next[0]!.title : "Nothing due soon"}</span>
+                </button>
+              );
+            })}
+            {groups(items).map(([t, list]) => (
+              <div key={t} style={sx("position: absolute; left: 6px; right: 6px; z-index: 3; display: flex; flex-direction: column; gap: 4px; " + (t >= 21 ? "bottom: " + Math.max(6, (24 - t) * HD) + "px;" : "top: " + (Math.max(0, t - 7) * HD + 2) + "px;"))}>
+                <span style={sx("font-size: 11px; font-weight: 800; color: var(--text); padding: 0 2px;")}>Due {fmtT(t)}</span>
+                {list.map((it) => { const cd = cardOf(it, anim); return (
+                  <button key={it.id} type="button" onClick={() => open(it.id)} aria-label={cd.aria} className="lift" style={sx(cd.chip.replace("padding: 4px 6px", "padding: 7px 10px"))}>
+                    <Ico d={ALARM} size={13} style="flex-shrink: 0; color: var(--text);" />
+                    <span aria-hidden="true" style={sx(cd.chipDot)} />
+                    <span style={sx("flex: 1 1 auto; min-width: 0; font-size: 12px; font-weight: 700;" + (it.done ? " text-decoration: line-through; opacity: 0.6;" : ""))}>{it.title}</span>
+                    <span style={sx("font-size: 11px; font-weight: 700; color: var(--text-2);")}>{it.course.code}</span>
+                  </button>
+                ); })}
+              </div>
+            ))}
+            {isToday && nowH >= 7 && (
+              <div aria-hidden="true" style={sx(`position: absolute; left: 0; right: 0; top: ${(nowH - 7) * HD}px; height: 2px; background: var(--weekend); z-index: 4;`)}>
+                <span style={sx("position: absolute; left: -5px; top: -4px; width: 10px; height: 10px; border-radius: 5px; background: var(--weekend);")} />
+              </div>
+            )}
+          </div>
         </div>
-      ))}
-    </Dialog>
+      </div>
+
+      <div style={sx("flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 12px;")}>
+        <section className="frost" style={sx(section)}>
+          <h2 style={sx("margin: 0; font-size: 15px; font-weight: 800;")}>At a glance</h2>
+          <div style={sx("display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px;")}>
+            {[[String(items.length), items.length === 1 ? "thing due" : "things due"], [studyHrs + " h", "study time"], [String(classes.length), classes.length === 1 ? "class" : "classes"]].map(([n, l]) => (
+              <div key={l} style={sx("padding: 10px; border-radius: 12px; background: var(--surface-2); display: flex; flex-direction: column; gap: 2px;")}>
+                <span style={sx("font-size: 22px; font-weight: 800;")}>{n}</span>
+                <span style={sx("font-size: 12px; color: var(--text-2);")}>{l}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+        <section className="frost" style={sx(section)}>
+          <h2 style={sx("margin: 0; font-size: 15px; font-weight: 800;")}>Due {dayWord}</h2>
+          {items.map((it) => rowOf(it, false))}
+          {!items.length && <span style={sx("font-size: 13px; color: var(--text-2);")}>Nothing due.</span>}
+        </section>
+        <section className="frost" style={sx(section)}>
+          <h2 style={sx("margin: 0; font-size: 15px; font-weight: 800;")}>Study time {dayWord}</h2>
+          {cur ? (
+            <>
+              <div style={sx("display: flex; align-items: center; gap: 10px;")}>
+                <button type="button" disabled={slots.length < 2} onClick={() => setStudyTab((Math.min(studyTab, slots.length - 1) - 1 + slots.length) % slots.length)} aria-label="Previous class" title="Previous class" style={sx(navBtn)}><Ico d={P.left} size={15} sw={2.2} /></button>
+                <div aria-live="polite" style={sx("flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center;")}>
+                  <span style={sx("display: inline-flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 800;")}><span aria-hidden="true" style={sx(dotStyle(cur.course))} />{cur.course.code} {cur.course.name}</span>
+                  <span style={sx("font-size: 12px; color: var(--text-2);")}>Class {Math.min(studyTab, slots.length - 1) + 1} of {slots.length}</span>
+                </div>
+                <button type="button" disabled={slots.length < 2} onClick={() => setStudyTab((Math.min(studyTab, slots.length - 1) + 1) % slots.length)} aria-label="Next class" title="Next class" style={sx(navBtn)}><Ico d={P.right} size={15} sw={2.2} /></button>
+              </div>
+              <div style={sx(`display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 12px; background: var(--${cur.course.color}-block); border: 1px solid var(--${cur.course.color}-soft); ` + anim)}>
+                <div style={sx("display: flex; align-items: baseline; justify-content: space-between; gap: 8px;")}>
+                  <span style={sx("font-size: 14px; font-weight: 800;")}>{cur.course.code} {cur.course.name}</span>
+                  <span style={sx("font-size: 12px; font-weight: 600; color: var(--text-2);")}>{fmtT(cur.s)} to {fmtT(cur.e)}</span>
+                </div>
+                <span style={sx("font-size: 12px; font-weight: 700; color: var(--text-2);")}>Coming up for this class</span>
+                {nx.map((it) => rowOf(it, true))}
+                {!nx.length && <span style={sx("font-size: 12px; color: var(--text-2);")}>Nothing due in the next week.</span>}
+              </div>
+            </>
+          ) : <span style={sx("font-size: 13px; color: var(--text-2);")}>No study time set for this day.</span>}
+        </section>
+      </div>
+    </div>
   );
 }

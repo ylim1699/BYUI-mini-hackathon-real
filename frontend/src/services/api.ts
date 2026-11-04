@@ -9,7 +9,7 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T>(path: string, schema: z.ZodType<T>, body?: unknown): Promise<T> {
+export async function api<T>(path: string, schema: z.ZodType<T, z.ZodTypeDef, unknown>, body?: unknown): Promise<T> {
   if (USE_MOCKS) return schema.parse(await mockApi(path, body));
   const token = await accessToken();
   let res: Response;

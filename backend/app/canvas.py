@@ -96,7 +96,7 @@ async def fetch_courses_and_assignments(base_url: str, token: str) -> list[dict[
                 continue
             cid = course["id"]
             assignments = await _get_all(
-                c, f"/api/v1/courses/{cid}/assignments", {"per_page": "100", "order_by": "due_date"}
+                c, f"/api/v1/courses/{cid}/assignments", {"per_page": "100", "order_by": "due_date", "include[]": "submission"}
             )
             result.append(
                 {
@@ -105,9 +105,15 @@ async def fetch_courses_and_assignments(base_url: str, token: str) -> list[dict[
                     "name": course.get("name", ""),
                     "syllabus_html": course.get("syllabus_body") or "",
                     "items": [map_assignment(a) for a in assignments if a.get("published", True)],
+                    "submitted": [str(a["id"]) for a in assignments if submitted(a)],
                 }
             )
         return result
+
+
+def submitted(a: dict[str, Any]) -> bool:
+    sub = a.get("submission") or {}
+    return sub.get("workflow_state") in ("submitted", "graded", "pending_review")
 
 
 def map_assignment(a: dict[str, Any]) -> dict[str, Any]:

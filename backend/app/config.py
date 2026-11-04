@@ -13,12 +13,21 @@ class Settings(BaseSettings):
     supabase_anon_key: str = ""
     supabase_service_role_key: str = ""
 
+    # Where the app is served (used for OAuth redirects), e.g. https://your-app.vercel.app
+    app_url: str = "http://localhost:5173"
+
+    # Google Calendar connection (not sign-in)
     google_client_id: str = ""
     google_client_secret: str = ""
 
+    # Outlook connection (Microsoft Entra app registration)
+    microsoft_client_id: str = ""
+    microsoft_client_secret: str = ""
+
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
-    ai_daily_limit: int = 20
+    ai_daily_limit: int = 20          # per browser session per day
+    ai_global_daily_limit: int = 300  # whole site per day (protects the free quota)
 
     encryption_key: str = ""
     canvas_base_url: str = "https://byui.instructure.com"
@@ -27,6 +36,10 @@ class Settings(BaseSettings):
     @property
     def origins(self) -> list[str]:
         return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
+
+    @property
+    def base_url(self) -> str:
+        return self.app_url.rstrip("/")
 
     def missing(self) -> list[str]:
         required = {

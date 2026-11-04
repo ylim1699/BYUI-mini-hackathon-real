@@ -49,7 +49,11 @@ async def import_canvas(user: User = Depends(current_user)) -> ImportResult:
     else:
         raise AppError(400, "Connect Canvas first.", "canvas_missing")
 
-    # Keep the student's own edits (renamed classes, colors) on re-import.
+    # Keep the student's own edits (renamed classes, colors, edited items) on re-import.
+    edited = {
+        (r["course_id"], r["canvas_id"])
+        for r in await db.select("items", {"user_id": f"eq.{user.id}", "edited": "eq.true", "select": "course_id,canvas_id"})
+    }
     existing = {
         r["canvas_id"]: r["id"]
         for r in await db.select("courses", {"user_id": f"eq.{user.id}", "select": "id,canvas_id"})
@@ -75,10 +79,18 @@ async def import_canvas(user: User = Depends(current_user)) -> ImportResult:
             course_id = saved[0]["id"]
         rows: list[dict[str, Any]] = [
             {**it, "user_id": user.id, "course_id": course_id} for it in c["items"]
+            if (course_id, it["canvas_id"]) not in edited
         ]
         if rows:
             await db.upsert("items", rows, "user_id,course_id,canvas_id")
             n_items += len(rows)
+        done_ids = c.get("submitted") or []
+        if done_ids:  # already turned in on Canvas: mark done here too
+            await db.update(
+                "items",
+                {"user_id": f"eq.{user.id}", "course_id": f"eq.{course_id}", "canvas_id": f"in.({','.join(done_ids)})"},
+                {"status": "done"},
+            )
     return ImportResult(courses=len(courses), items=n_items, source=source)  # type: ignore[arg-type]
 
 

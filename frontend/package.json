@@ -9,7 +9,7 @@
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run",
     "preview": "vite preview",
-    "dev:demo": "vite --mode demo"
+    "dev:mock": "vite --mode mock"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0",

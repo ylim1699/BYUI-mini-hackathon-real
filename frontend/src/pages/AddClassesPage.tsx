@@ -1,225 +1,222 @@
 import { useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, type DragEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button, Card, Confirm, Dot, ErrorNote, inputCls, PageHeader } from "../components/ui";
-import { Icon } from "../components/ui/Icon";
-import { useCourses, useMe, useRefreshAll } from "../hooks/useData";
+import { Confirm, ErrorNote, Ico, P, PageHead, S } from "../components/ui";
+import { useAll, useFiles, useMe, useRefreshAll, useUpdateFile } from "../hooks/useData";
 import { pdfToText } from "../lib/pdfText";
+import { col, soft } from "../lib/plan";
+import { sx } from "../lib/sx";
 import { api, errorText } from "../services/api";
 import * as db from "../services/db";
 import { useUi } from "../store/ui";
-import {
-  COLORS, connectResultSchema, importResultSchema, okSchema, parsedSyllabusSchema, TYPE_LABEL, type ParsedSyllabus,
-} from "../types/domain";
+import { COLORS, connectResultSchema, importResultSchema, okSchema, parsedSyllabusSchema, type Course, type ParsedSyllabus } from "../types/domain";
 
-const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+interface Pending { id: string; name: string; status: string; error: boolean }
+const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+const codeFromName = (name: string) => /([A-Z]{2,5})\s?-?(\d{3}[A-Z]?)/.exec(name)?.slice(1, 3).join(" ") ?? null;
 
 export function AddClassesPage() {
+  const nav = useNavigate();
+  const { courses, items } = useAll();
+  const files = useFiles();
+  const refresh = useRefreshAll();
+  const updateFile = useUpdateFile();
+  const notify = useUi((s) => s.notify);
+  const [pending, setPending] = useState<Pending[]>([]);
+  const [drag, setDrag] = useState(false);
+  const [del, setDel] = useState<{ id: string; name: string } | null>(null);
+
+  const liveItems = items.filter((i) => !i.deleted_at).length;
+  const shownFiles = (files.data ?? []).filter((f) => !f.deleted_at);
+
+  const setP = (id: string, patch: Partial<Pending>) => setPending((list) => list.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+
+  /** Save what the AI found: a new class, or new items on a class you already have (no duplicates). */
+  const saveParsed = async (p: ParsedSyllabus, fileName: string): Promise<{ course: Course; added: number; flags: number }> => {
+    const [courses, items] = await Promise.all([db.listCourses(), db.listItems()]); // fresh, so several files in a row don't collide
+    const code = (p.course_code || codeFromName(fileName) || fileName.replace(/\.pdf$/i, "")).trim().slice(0, 40);
+    let course = courses.find((c) => norm(c.code) === norm(code));
+    const credits = p.credits ?? 3;
+    const notes = [p.notes, !p.meetings.length && p.meeting_days_text ? `The syllabus says: ${p.meeting_days_text}` : null].filter(Boolean).join(" ") || null;
+    if (!course) {
+      course = await db.insertCourse({
+        canvas_id: null, code, name: (p.course_name ?? "").slice(0, 120), color: COLORS[courses.length % COLORS.length] ?? "c1",
+        credits, hours_per_week: p.weekly_hours ?? credits * 2.5, online: p.online, meetings: p.meetings, confirmed: false, source: "syllabus",
+        notes, late_policy: p.late_policy, source_lines: p.source_lines.slice(0, 8), file_name: fileName, renamed: false,
+      });
+    } else {
+      await db.updateCourse(course.id, {
+        file_name: fileName, source_lines: p.source_lines.slice(0, 8), late_policy: course.late_policy ?? p.late_policy, notes: course.notes ?? notes,
+        ...(course.meetings.length || !p.meetings.length ? {} : { meetings: p.meetings, online: p.online ?? course.online }),
+      });
+    }
+    const have = new Set(items.filter((i) => i.course_id === course.id).map((i) => norm(i.title)));
+    const fresh = p.items.filter((it) => !have.has(norm(it.title)));
+    await db.insertItems(fresh.map((it) => ({
+      course_id: course.id, title: it.title.slice(0, 300), type: it.type,
+      due_at: it.due_date ? new Date(`${it.due_date}T${it.due_time ?? "23:59"}`).toISOString() : null,
+      estimated_hours: it.hours ?? 1, source: "syllabus", confidence: it.due_date ? it.confidence : Math.min(it.confidence, 0.5),
+      status: "todo", notes: it.note ?? (it.due_date ? null : "No due date found. Add one."), deleted_at: null, edited: false,
+    })));
+    const flags = fresh.filter((it) => it.confidence < 0.7 || !it.due_date).length;
+    return { course, added: fresh.length, flags };
+  };
+
+  const handleFiles = async (list: FileList | File[]) => {
+    const pdfs = [...list].filter((f) => /\.pdf$/i.test(f.name) || f.type === "application/pdf");
+    if (!pdfs.length) { notify({ text: "Choose PDF files." }); return; }
+    for (const f of pdfs) {
+      const id = `${f.name}-${Date.now()}`;
+      setPending((l) => [...l, { id, name: f.name, status: "Reading the PDF…", error: false }]);
+      try {
+        if (f.size > 20 * 1024 * 1024) throw new Error("This file is over 20 MB.");
+        const text = await pdfToText(f);
+        if (text.length < 50) throw new Error("This PDF has almost no text (it may be a scan).");
+        setP(id, { status: "Finding dates with AI…" });
+        const parsed = await api("/syllabus/parse", parsedSyllabusSchema, { text: text.slice(0, 60_000), course_code: codeFromName(f.name) });
+        const r = await saveParsed(parsed, f.name);
+        const status = `${r.added} item${r.added === 1 ? "" : "s"} found` + (r.flags ? `, ${r.flags} to check` : "");
+        await db.insertFile({ course_id: r.course.id, name: f.name, status });
+        setPending((l) => l.filter((p) => p.id !== id));
+        await refresh();
+        notify({ text: `${r.course.code}: ${status}.` });
+      } catch (e) {
+        setP(id, { status: errorText(e), error: true });
+      }
+    }
+  };
+
+  const onDrop = (e: DragEvent) => { e.preventDefault(); setDrag(false); void handleFiles(e.dataTransfer.files); };
+
   return (
-    <>
-      <PageHeader title="Add your classes" sub="Import from Canvas, add a syllabus, or both. Everything goes to Review before it reaches your calendar." />
-      <div className="grid gap-5 lg:grid-cols-2">
+    <div className="anim-page" style={sx("display: flex; flex-direction: column; gap: 16px;")}>
+      <PageHead title="Add your classes"
+        sub="Upload each syllabus as a PDF. For a Canvas syllabus page, print it to PDF. You check every item before anything reaches your calendar."
+        right={<button type="button" onClick={() => nav("/review")} style={sx(S.primary)}>Review {liveItems} items</button>} />
+      <div style={sx("display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start;")}>
+        <section style={sx("flex: 2 1 440px; min-width: 0; padding: 18px; " + S.card)}>
+          <div onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={onDrop}
+            style={sx("display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; min-height: 200px; padding: 26px 20px; box-sizing: border-box; border: 1.5px dashed " + (drag ? "var(--c1)" : "var(--line-strong)") + "; border-radius: 14px; text-align: center;" + (drag ? " background: var(--c1-soft);" : ""))}>
+            <div style={sx("width: 52px; height: 52px; border-radius: 16px; background: var(--surface-3); color: var(--text); display: flex; align-items: center; justify-content: center;")}>
+              <Ico d={P.upload} size={24} sw={1.8} />
+            </div>
+            <span style={sx("font-size: 17px; font-weight: 800;")}>Drop syllabus PDFs here</span>
+            <span style={sx("font-size: 13px; color: var(--muted);")}>One file per class. PDF, up to 20 MB each. Read in your browser; only the text goes to the AI.</span>
+            <label style={sx("position: relative; display: inline-flex; align-items: center; min-height: 42px; padding: 0 20px; margin-top: 4px; border-radius: 21px; border: 1px solid var(--line-strong); background: var(--surface-2); font-size: 14px; font-weight: 700; color: var(--text); cursor: pointer;")}>
+              Choose files
+              <input type="file" accept=".pdf,application/pdf" multiple onChange={(e) => { if (e.target.files) void handleFiles(e.target.files); e.target.value = ""; }}
+                style={sx("position: absolute; inset: 0; opacity: 0; cursor: pointer;")} />
+            </label>
+          </div>
+          <div style={sx("display: flex; flex-direction: column; margin-top: 14px;")}>
+            {pending.map((p) => (
+              <div key={p.id} style={sx("display: flex; align-items: center; gap: 14px; padding: 12px 4px; border-top: 1px solid var(--line);")}>
+                <div style={sx("width: 38px; height: 38px; flex-shrink: 0; border-radius: 12px; background: var(--surface-3); display: flex; align-items: center; justify-content: center;")}>
+                  {p.error ? <Ico d={P.warn} size={18} sw={1.8} style="color: var(--warn-text);" /> : <span className="spinner" />}
+                </div>
+                <div style={sx("flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px;")}>
+                  <span style={sx("font-size: 14px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;")}>{p.name}</span>
+                  <span role={p.error ? "alert" : "status"} style={sx("font-size: 13px; font-weight: 600; color: " + (p.error ? "var(--warn-text)" : "var(--text-2)") + ";")}>{p.status}</span>
+                </div>
+                {p.error && (
+                  <button type="button" aria-label={`Dismiss ${p.name}`} onClick={() => setPending((l) => l.filter((x) => x.id !== p.id))}
+                    style={sx("width: 36px; height: 36px; flex-shrink: 0; padding: 0; border-radius: 18px; border: 1px solid var(--line-strong); background: transparent; color: var(--text-2); cursor: pointer; display: flex; align-items: center; justify-content: center;")}>
+                    <Ico d={P.x} size={13} sw={2.6} />
+                  </button>
+                )}
+              </div>
+            ))}
+            {shownFiles.map((f) => {
+              const c = courses.find((x) => x.id === f.course_id);
+              const tint = c ?? { color: "c1" };
+              return (
+                <div key={f.id} style={sx("display: flex; align-items: center; gap: 14px; padding: 12px 4px; border-top: 1px solid var(--line);")}>
+                  <div style={sx(`width: 38px; height: 38px; flex-shrink: 0; border-radius: 12px; background: ${soft(tint)}; color: ${col(tint)}; display: flex; align-items: center; justify-content: center;`)}>
+                    <Ico d={P.file} size={18} sw={1.8} />
+                  </div>
+                  <div style={sx("flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px;")}>
+                    <span style={sx("font-size: 14px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;")}>{f.name}</span>
+                    <span style={sx("font-size: 13px; font-weight: 600; color: var(--warn-text);")}>{f.status}</span>
+                  </div>
+                  <button type="button" onClick={() => nav(c ? `/review?c=${c.id}` : "/review")}
+                    style={sx("min-height: 36px; padding: 0 16px; border-radius: 18px; border: 1px solid var(--line-strong); background: var(--surface-2); font-size: 13px; font-weight: 700; color: var(--text); cursor: pointer;")}>Review</button>
+                  <button type="button" onClick={() => setDel({ id: f.id, name: f.name })} aria-label={`Delete ${f.name}`} title={`Delete ${f.name}`}
+                    style={sx("width: 36px; height: 36px; flex-shrink: 0; padding: 0; border-radius: 18px; border: 1px solid var(--line-strong); background: transparent; color: var(--text-2); cursor: pointer; display: flex; align-items: center; justify-content: center;")}>
+                    <Ico d={P.trash} size={15} sw={1.9} />
+                  </button>
+                </div>
+              );
+            })}
+            {!shownFiles.length && !pending.length && <span style={sx("padding: 12px 4px; font-size: 13px; font-weight: 700; color: var(--text-2);")}>No syllabi added yet.</span>}
+          </div>
+        </section>
         <CanvasCard />
-        <SyllabusCard />
       </div>
-    </>
+
+      <Confirm open={!!del} danger title={`Delete “${del?.name ?? ""}”?`} yes="Delete" onClose={() => setDel(null)}
+        body="The file is removed from this list. Items you already reviewed stay on your calendar. You can restore it from Recently deleted for 1 day."
+        onYes={() => {
+          if (!del) return;
+          const id = del.id;
+          updateFile.mutate({ id, patch: { deleted_at: new Date().toISOString() } });
+          notify({ text: `Deleted ${del.name}.`, undo: () => updateFile.mutate({ id, patch: { deleted_at: null } }) });
+        }} />
+    </div>
   );
 }
 
 function CanvasCard() {
   const me = useMe();
   const refresh = useRefreshAll();
-  const notify = useUi((s) => s.notify);
   const nav = useNavigate();
+  const notify = useUi((s) => s.notify);
   const [token, setToken] = useState("");
   const [feed, setFeed] = useState("");
+  const linked = me.data?.canvas ?? null;
 
-  const connect = useMutation({
-    mutationFn: () => api("/canvas/connect", connectResultSchema, token.trim() ? { token: token.trim() } : { feed_url: feed.trim() }),
-    onSuccess: (r) => { setToken(""); setFeed(""); refresh(); notify({ text: r.name ? `Connected to Canvas as ${r.name}.` : "Canvas calendar feed connected." }); },
-  });
-  const importNow = useMutation({
-    mutationFn: () => api("/canvas/import", importResultSchema, {}),
-    onSuccess: (r) => {
-      refresh();
-      notify({ text: `Imported ${r.courses} classes and ${r.items} items.`, action: { label: "Review them", run: () => nav("/review") } });
+  const run = useMutation({
+    mutationFn: async () => {
+      if (!linked || token.trim() || feed.trim()) {
+        await api("/canvas/connect", connectResultSchema, token.trim() ? { token: token.trim() } : { feed_url: feed.trim() });
+      }
+      return api("/canvas/import", importResultSchema, {});
+    },
+    onSuccess: async (r) => {
+      setToken(""); setFeed("");
+      await refresh();
+      notify({ text: `Imported ${r.courses} classes and ${r.items} items from Canvas.` });
+      if (r.items) nav("/review");
     },
   });
   const disconnect = useMutation({ mutationFn: () => api("/canvas/disconnect", okSchema, {}), onSuccess: () => refresh() });
-
-  const linked = me.data?.canvas;
-  return (
-    <Card className="space-y-4">
-      <div className="flex items-center gap-2">
-        <Icon name="school" className="text-[var(--c1)]" />
-        <h2 className="text-lg font-extrabold">Import from Canvas</h2>
-        {linked && <span className="ml-auto rounded-full bg-[var(--c2-soft)] px-2.5 py-0.5 text-xs font-bold text-[var(--c2)]">Connected ({linked === "token" ? "access token" : "calendar feed"})</span>}
-      </div>
-
-      {!linked ? (
-        <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); connect.mutate(); }}>
-          <div>
-            <label htmlFor="cv-token" className="text-[13px] font-bold text-text">Canvas access token (best)</label>
-            <input id="cv-token" type="password" autoComplete="off" className={`${inputCls} mt-1.5 w-full`} value={token}
-              onChange={(e) => setToken(e.target.value)} placeholder="Paste your token" />
-            <p className="mt-1.5 text-xs font-bold text-text">In Canvas: Account → Settings → New access token. Gets classes, assignments, and syllabus pages.</p>
-          </div>
-          <div className="flex items-center gap-3 text-xs font-bold text-text"><span className="h-px flex-1 bg-line" />or<span className="h-px flex-1 bg-line" /></div>
-          <div>
-            <label htmlFor="cv-feed" className="text-[13px] font-bold text-text">Calendar feed link (backup)</label>
-            <input id="cv-feed" type="url" className={`${inputCls} mt-1.5 w-full`} value={feed}
-              onChange={(e) => setFeed(e.target.value)} placeholder="https://byui.instructure.com/feeds/calendars/…" />
-            <p className="mt-1.5 text-xs font-bold text-text">In Canvas: Calendar → Calendar Feed. Due dates only, no syllabus pages.</p>
-          </div>
-          <Button variant="primary" type="submit" disabled={connect.isPending || (!token.trim() && !feed.trim())}>
-            {connect.isPending ? "Connecting…" : "Connect Canvas"}
-          </Button>
-          <p className="text-xs font-bold text-text">Your token is encrypted on our server and never shown again. You can disconnect any time.</p>
-        </form>
-      ) : (
-        <div className="flex flex-wrap gap-2">
-          <Button variant="primary" onClick={() => importNow.mutate()} disabled={importNow.isPending}>
-            <Icon name="sync" size={16} />{importNow.isPending ? "Importing…" : "Import classes and due dates"}
-          </Button>
-          <Button variant="quiet" onClick={() => disconnect.mutate()} disabled={disconnect.isPending}>Disconnect</Button>
-        </div>
-      )}
-      <ErrorNote error={connect.error ?? importNow.error ?? disconnect.error} />
-    </Card>
-  );
-}
-
-function SyllabusCard() {
-  const courses = useCourses();
-  const refresh = useRefreshAll();
-  const { files, addFile, removeFile, restoreFile, notify } = useUi();
-  const [text, setText] = useState("");
-  const [fileName, setFileName] = useState<string | null>(null);
-  const [code, setCode] = useState("");
-  const [reading, setReading] = useState(false);
-  const [readErr, setReadErr] = useState<string | null>(null);
-  const [parsed, setParsed] = useState<ParsedSyllabus | null>(null);
-  const [del, setDel] = useState<{ id: string; name: string } | null>(null);
-
-  const onFile = async (f: File | undefined) => {
-    if (!f) return;
-    setReadErr(null); setParsed(null); setFileName(f.name);
-    if (!/^.+\.(pdf|PDF)$/.test(f.name) && f.type !== "application/pdf") { setText(await f.text()); return; }
-    setReading(true);
-    try {
-      const t = await pdfToText(f);
-      if (t.length < 50) setReadErr("This PDF has almost no text (it may be a scan). Paste the syllabus text instead.");
-      setText(t);
-    } catch { setReadErr("Couldn't read that PDF. Paste the syllabus text instead."); }
-    finally { setReading(false); }
-  };
-
-  const parse = useMutation({
-    mutationFn: () => api("/syllabus/parse", parsedSyllabusSchema, { text: text.slice(0, 60_000), course_code: code.trim() || null }),
-    onSuccess: setParsed,
-  });
-
-  const save = useMutation({
-    mutationFn: async (p: ParsedSyllabus) => {
-      const list = courses.data ?? [];
-      const codeText = (p.course_code || code || "New class").trim();
-      let course = list.find((c) => c.code.toLowerCase() === codeText.toLowerCase());
-      if (!course) {
-        const credits = p.credits ?? 3;
-        course = await db.insertCourse({
-          canvas_id: null, code: codeText, name: p.course_name ?? "", color: COLORS[list.length % COLORS.length] ?? "c1",
-          credits, hours_per_week: credits * 2.5, online: p.online, meetings: p.meetings, confirmed: false, source: "syllabus",
-        });
-      } else if (!course.meetings.length && p.meetings.length) {
-        await db.updateCourse(course.id, { meetings: p.meetings, online: p.online ?? course.online });
-      }
-      await db.insertItems(p.items.map((it) => ({
-        course_id: course.id, title: it.title, type: it.type,
-        due_at: it.due_date ? new Date(`${it.due_date}T${it.due_time ?? "23:59"}`).toISOString() : null,
-        estimated_hours: 1, source: "syllabus", confidence: it.confidence, status: "todo", notes: it.note, deleted_at: null,
-      })));
-      return course;
-    },
-    onSuccess: (course) => {
-      addFile({ id: `${Date.now()}`, name: fileName ?? `${course.code} syllabus (pasted)`, courseId: course.id, addedAt: new Date().toISOString() });
-      setParsed(null); setText(""); setFileName(null); setCode("");
-      refresh();
-      notify({ text: `Added ${course.code} to Review.` });
-    },
-  });
-
-  const courseOf = (id: string) => courses.data?.find((c) => c.id === id);
+  const ready = !!linked || token.trim().length >= 20 || /^https:\/\/.+/.test(feed.trim());
 
   return (
-    <Card className="space-y-4">
-      <div className="flex items-center gap-2">
-        <Icon name="file" className="text-[var(--c3)]" />
-        <h2 className="text-lg font-extrabold">Add a syllabus</h2>
-      </div>
-      <label className="flex cursor-pointer flex-col items-center gap-1 rounded-xl border-2 border-dashed border-line-strong bg-field px-4 py-6 text-center text-sm font-bold hover:border-[var(--c3)]">
-        <span>{reading ? "Reading the PDF…" : fileName ?? "Choose a syllabus PDF"}</span>
-        <span className="text-xs text-text-2">Read in your browser. Only the text is sent to the AI.</span>
-        <input type="file" accept=".pdf,.txt,application/pdf,text/plain" className="sr-only" onChange={(e) => onFile(e.target.files?.[0])} />
-      </label>
-      <textarea className={`${inputCls} h-28 w-full resize-y font-semibold`} value={text} onChange={(e) => { setText(e.target.value); setParsed(null); }}
-        placeholder="…or paste the syllabus text here" aria-label="Syllabus text" />
-      <div className="flex flex-wrap gap-2">
-        <input className={`${inputCls} w-44`} value={code} onChange={(e) => setCode(e.target.value)} placeholder="Class code (optional)" aria-label="Class code" />
-        <Button variant="primary" onClick={() => parse.mutate()} disabled={parse.isPending || reading || text.trim().length < 50}>
-          <Icon name="sparkle" size={16} />{parse.isPending ? "Reading with AI…" : "Find dates"}
-        </Button>
-      </div>
-      {readErr && <ErrorNote error={readErr} />}
-      <ErrorNote error={parse.error ? errorText(parse.error) : null} />
-
-      {parsed && (
-        <div className="rounded-xl border border-line-strong bg-surface-2 p-4">
-          <p className="font-extrabold">{parsed.course_code ?? (code || "New class")} {parsed.course_name && <span className="text-text-2">· {parsed.course_name}</span>}</p>
-          <p className="mt-1 text-xs font-bold text-text-2">
-            {parsed.online ? "Online" : parsed.meetings.length ? parsed.meetings.map((m) => `${DAYS[m.day]} ${m.start}–${m.end}`).join(", ") : "No class times found"}
-            {parsed.credits ? ` · ${parsed.credits} credits` : ""}
-          </p>
-          <ul className="mt-3 space-y-1.5 text-sm">
-            {parsed.items.map((it, n) => (
-              <li key={n} className={`rounded-lg px-2 py-1.5 ${it.confidence < 0.7 ? "bg-[var(--flag-row)]" : ""}`}>
-                <span className="font-bold">{it.title}</span> <span className="text-text-2">· {TYPE_LABEL[it.type]} · {it.due_date ?? "no date"}</span>
-                {it.confidence < 0.7 && <span className="block text-xs font-bold text-warn">Check this: {it.note ?? "the date wasn't clear"}</span>}
-              </li>
-            ))}
-            {!parsed.items.length && <li className="text-text-2">No dated items found.</li>}
-          </ul>
-          <div className="mt-4 flex gap-2">
-            <Button variant="primary" onClick={() => save.mutate(parsed)} disabled={save.isPending}>{save.isPending ? "Adding…" : "Add to Review"}</Button>
-            <Button variant="quiet" onClick={() => setParsed(null)}>Cancel</Button>
-          </div>
-          <ErrorNote error={save.error} />
-        </div>
+    <section style={sx("flex: 1 1 280px; min-width: 0; padding: 20px; display: flex; flex-direction: column; gap: 14px; " + S.card)}>
+      <h2 style={sx("margin: 0; font-size: 18px; font-weight: 800; color: var(--text);")}>Import from Canvas</h2>
+      <p style={sx("margin: 0; font-size: 13px; line-height: 1.55; font-weight: 700; color: var(--text);")}>Pull in what professors post in Canvas. Canvas dates win over the syllabus when they disagree, and nothing shows up twice.</p>
+      {linked && (
+        <span style={sx("align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 12px; background: var(--c2-soft); color: var(--ok); font-size: 12px; font-weight: 800;")}>
+          <Ico d={P.check} size={13} sw={2.6} />Connected with {linked === "token" ? "your access token" : "your calendar feed"}
+        </span>
       )}
-
-      <div>
-        <h3 className="mb-2 text-sm font-extrabold">Added syllabi</h3>
-        {!files.length ? <p className="text-sm text-text-2">No syllabi added yet.</p> : (
-          <ul className="space-y-1.5">
-            {files.map((f) => {
-              const c = courseOf(f.courseId);
-              return (
-                <li key={f.id} className="flex items-center gap-2 rounded-lg bg-surface-2 px-3 py-2 text-sm font-bold">
-                  {c && <Dot color={c.color} />}
-                  <span className="min-w-0 flex-1 truncate">{f.name}</span>
-                  {c && <span className="text-xs text-text-2">{c.code}</span>}
-                  <button aria-label={`Delete ${f.name}`} onClick={() => setDel({ id: f.id, name: f.name })} className="rounded p-1 text-text-2 hover:text-[var(--weekend)]">
-                    <Icon name="trash" size={16} />
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+      <div style={sx("display: flex; flex-direction: column; gap: 6px;")}>
+        <label htmlFor="canvas-token" style={sx("font-size: 13px; font-weight: 800; color: var(--text);")}>{linked ? "New Canvas access token (optional)" : "Canvas access token"}</label>
+        <input id="canvas-token" className="hi-input" type="password" autoComplete="off" placeholder="Paste your token" value={token} onChange={(e) => setToken(e.target.value)} style={sx(S.field)} />
+        <span style={sx("font-size: 12px; line-height: 1.45; font-weight: 700; color: var(--text);")}>In Canvas: Account, then Settings, then New access token.</span>
       </div>
-
-      <Confirm open={!!del} title={`Delete "${del?.name ?? ""}"?`} danger yes="Delete" onClose={() => setDel(null)}
-        body="Items you already reviewed stay. You can restore the file from Recently deleted for 1 day."
-        onYes={() => { if (!del) return; const id = del.id; removeFile(id); notify({ text: "Syllabus deleted.", undo: () => restoreFile(id) }); }} />
-    </Card>
+      <div style={sx("display: flex; flex-direction: column; gap: 6px;")}>
+        <label htmlFor="feed" style={sx("font-size: 13px; font-weight: 800; color: var(--text);")}>Or calendar feed link</label>
+        <input id="feed" className="hi-input" type="url" placeholder="https://byui.instructure.com/feeds/…" value={feed} onChange={(e) => setFeed(e.target.value)} style={sx(S.field)} />
+        <span style={sx("font-size: 12px; line-height: 1.45; font-weight: 700; color: var(--text);")}>In Canvas: Calendar, then Calendar feed. Use this if tokens are turned off.</span>
+      </div>
+      <button type="button" onClick={() => run.mutate()} disabled={!ready || run.isPending}
+        style={sx("min-height: 44px; border-radius: 22px; border: 0; background: var(--primary-bg); color: var(--primary-text); font-size: 14px; font-weight: 800; cursor: pointer;" + (!ready || run.isPending ? " opacity: 0.5; cursor: not-allowed;" : ""))}>
+        {run.isPending ? "Importing…" : linked && !token && !feed ? "Import again" : "Import from Canvas"}
+      </button>
+      <ErrorNote error={run.error ?? disconnect.error} />
+      <p style={sx("margin: 0; font-size: 12px; line-height: 1.5; font-weight: 700; color: var(--text);")}>Your token is stored encrypted and is only used to read your classes.</p>
+      {linked && <button type="button" onClick={() => disconnect.mutate()} style={sx("align-self: flex-start; padding: 0; border: 0; background: transparent; color: var(--text-2); font-size: 12px; font-weight: 700; cursor: pointer; text-decoration: underline;")}>Disconnect Canvas</button>}
+    </section>
   );
 }
