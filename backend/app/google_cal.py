@@ -4,6 +4,7 @@ Scope: https://www.googleapis.com/auth/calendar.app.created
 (lets the app create its own calendar and manage events in it, nothing else).
 """
 import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlencode
@@ -26,6 +27,21 @@ API = "https://www.googleapis.com/calendar/v3"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 CAL_NAME = "Syllabus Planner"
 TAG = "syllabusPlanner"
+log = logging.getLogger("uvicorn.error")
+
+
+async def call(client: httpx.AsyncClient, method: str, url: str, **kw: Any) -> httpx.Response:
+    """One Google Calendar request, retried with backoff when Google says to slow down."""
+    r = await client.request(method, url, **kw)
+    for wait in (1, 2, 4, 8):
+        limited = r.status_code == 429 or (r.status_code == 403 and "ateLimit" in r.text) or "usageLimits" in r.text
+        if not (limited or r.status_code >= 500):
+            break
+        await asyncio.sleep(wait)
+        r = await client.request(method, url, **kw)
+    if r.status_code >= 400 and r.status_code not in (404, 410):
+        log.error("Google %s %s -> %s: %s", method, url.rsplit("/calendars/", 1)[-1][:60], r.status_code, r.text[:400])
+    return r
 
 
 def configured() -> bool:
@@ -143,7 +159,7 @@ async def sync(user_id: str, body: SyncIn) -> SyncResult:
         raise AppError(400, "Connect Google Calendar first.", "google_reconnect")
     token = await access_token(refresh)
     events = build_events(body)
-    sem = asyncio.Semaphore(5)
+    sem = asyncio.Semaphore(3)
 
     async with httpx.AsyncClient(timeout=20, headers={"Authorization": f"Bearer {token}"}) as client:
         cal_id = await _ensure_calendar(client, user_id, conn.get(CAL_FIELD), body.time_zone)
@@ -153,15 +169,15 @@ async def sync(user_id: str, body: SyncIn) -> SyncResult:
         async def put(key: str, ev: dict[str, Any]) -> str:
             async with sem:
                 if key in existing:
-                    r = await client.put(f"{API}/calendars/{cal_id}/events/{existing[key]}", json=ev)
+                    r = await call(client, "PUT", f"{API}/calendars/{cal_id}/events/{existing[key]}", json=ev)
                     return "updated" if r.status_code < 400 else "failed"
-                r = await client.post(f"{API}/calendars/{cal_id}/events", json=ev)
+                r = await call(client, "POST", f"{API}/calendars/{cal_id}/events", json=ev)
                 return "created" if r.status_code < 400 else "failed"
 
         async def drop(event_id: str) -> str:
             async with sem:
-                r = await client.delete(f"{API}/calendars/{cal_id}/events/{event_id}")
-                return "removed" if r.status_code < 400 or r.status_code == 410 else "failed"
+                r = await call(client, "DELETE", f"{API}/calendars/{cal_id}/events/{event_id}")
+                return "removed" if r.status_code < 400 or r.status_code in (404, 410) else "failed"
 
         results = await asyncio.gather(
             *[put(k, ev) for k, ev in events],
