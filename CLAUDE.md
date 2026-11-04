@@ -39,7 +39,7 @@ Google Calendar or Outlook.
   Done items sync as "✅ Done: …" with no reminders. Remove-all deletes the app calendar. Outlook gets one reminder (the earliest).
 - Study block key: `YYYY-MM-DD|HH:MM|<courseId>` (links "studying for" items to one block occurrence).
 - Class meeting times appear on the calendar/sync only after the class is confirmed in Review.
-- Confirms: Review "Confirm CSE 280?" → Study time for that class. Study "Confirm CSE 325 study time?" stays on page.
+- Confirms: Review "Confirm CSE 280?" and Study "Confirm CSE 325 study time?" both stay on the same page.
   Every delete asks first, then Recently deleted for 1 day; "Delete now" waits for the Undo window.
 - Syllabus PDFs are read in the browser (pdfjs); only text goes to Gemini. Re-adding never duplicates items (title match).
 - Canvas re-import keeps the student's edits (`items.edited`) and marks items already submitted on Canvas as done.

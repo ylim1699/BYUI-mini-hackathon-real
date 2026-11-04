@@ -279,12 +279,11 @@ function CoursePanel({ course: c, items }: { course: Course; items: Item[] }) {
         {c.late_policy && <p style={sx("margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-2);")}><strong style={sx("color: var(--text);")}>Late work: </strong>{c.late_policy}</p>}
       </aside>
 
-      <Confirm open={ask?.kind === "course"} title={`Confirm ${c.code}?`} yes="Confirm and set study time" onClose={() => setAsk(null)}
-        body={`Its assignments${c.online === false && c.meetings.length ? " and class times" : ""} will show on your calendar and sync. Next you'll set its study time. You can still edit everything later.`}
+      <Confirm open={ask?.kind === "course"} title={`Confirm ${c.code}?`} yes="Confirm" onClose={() => setAsk(null)}
+        body={`Its assignments${c.online === false && c.meetings.length ? " and class times" : ""} will show on your calendar and sync. You can still edit everything later.`}
         onYes={() => {
           patch({ confirmed: true });
-          notify({ text: `${c.code} confirmed. Now set its study time.`, undo: () => { patch({ confirmed: false }); nav(`/review?c=${c.id}`); } });
-          nav(`/study?c=${c.id}`);
+          notify({ text: `${c.code} confirmed.`, undo: () => patch({ confirmed: false }) });
         }} />
       <Confirm open={ask?.kind === "row"} danger yes="Delete" onClose={() => setAsk(null)}
         title={`Delete “${ask?.kind === "row" ? ask.item.title || "this item" : ""}”?`}
