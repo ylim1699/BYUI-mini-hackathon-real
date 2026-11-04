@@ -1,0 +1,43 @@
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """All backend configuration. Values come from environment variables
+    (Vercel project settings) or a local .env file. Never expose these to the browser."""
+
+    model_config = SettingsConfigDict(env_file=(".env", "../.env"), extra="ignore")
+
+    supabase_url: str = ""
+    supabase_anon_key: str = ""
+    supabase_service_role_key: str = ""
+
+    google_client_id: str = ""
+    google_client_secret: str = ""
+
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
+    ai_daily_limit: int = 20
+
+    encryption_key: str = ""
+    canvas_base_url: str = "https://byui.instructure.com"
+    allowed_origins: str = "http://localhost:5173"
+
+    @property
+    def origins(self) -> list[str]:
+        return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
+
+    def missing(self) -> list[str]:
+        required = {
+            "SUPABASE_URL": self.supabase_url,
+            "SUPABASE_ANON_KEY": self.supabase_anon_key,
+            "SUPABASE_SERVICE_ROLE_KEY": self.supabase_service_role_key,
+            "ENCRYPTION_KEY": self.encryption_key,
+        }
+        return [k for k, v in required.items() if not v]
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

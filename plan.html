@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Syllabus Planner Build Plan</title>
+<style>
+  :root {
+    --bg: #fbfbf9;
+    --surface: #ffffff;
+    --text: #1d2330;
+    --muted: #5b6475;
+    --line: #dfe3ea;
+    --accent: #2f5fd0;
+    --accent-soft: #e8eefb;
+    --warn: #a15c00;
+    --warn-soft: #fff4e2;
+    --code-bg: #f2f4f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12151b; --surface: #191d25; --text: #e7eaf0; --muted: #9aa3b4;
+      --line: #2c323e; --accent: #7aa2ff; --accent-soft: #1f2a44;
+      --warn: #f0b35a; --warn-soft: #2e2416; --code-bg: #1f242e;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12151b; --surface: #191d25; --text: #e7eaf0; --muted: #9aa3b4;
+    --line: #2c323e; --accent: #7aa2ff; --accent-soft: #1f2a44;
+    --warn: #f0b35a; --warn-soft: #2e2416; --code-bg: #1f242e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 40px 16px 80px; }
+  h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 8px; }
+  h2 { font-size: 1.35rem; margin: 48px 0 12px; padding-top: 16px; border-top: 1px solid var(--line); }
+  h3 { font-size: 1.05rem; margin: 28px 0 8px; }
+  p, li { max-width: 72ch; }
+  .lede { color: var(--muted); margin: 0 0 24px; }
+  a { color: var(--accent); }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: .9em; }
+  pre {
+    background: var(--code-bg); padding: 14px 16px; border-radius: 8px;
+    overflow-x: auto; font-size: .85rem; line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: .92rem; margin: 8px 0 16px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  .table-scroll { overflow-x: auto; }
+  nav.toc { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 20px; }
+  nav.toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 32px; }
+  nav.toc li { margin: 2px 0; }
+  .rule { background: var(--accent-soft); border-left: 3px solid var(--accent); padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 16px 0; }
+  .note { background: var(--warn-soft); border-left: 3px solid var(--warn); padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 16px 0; }
+  .phase { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 4px 20px 12px; margin: 16px 0; }
+  .phase h3 { margin-top: 16px; }
+  .check li { list-style: "☐  "; }
+  @media (max-width: 600px) { nav.toc ol { columns: 1; } h1 { font-size: 1.6rem; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Syllabus Planner: build plan</h1>
+<p class="lede">The reference Claude follows when building this app. Version 2, Nov 3, 2026: the approved UI prototype now overrides anything in version 1 that disagrees with it. The app is built for real (Google sign-in, Canvas, Google Calendar, Gemini) and hosted on Vercel.</p>
+
+<div class="note"><strong>Source of truth for the UI:</strong> the Syllabus Planner prototype (design canvas artifact). When this plan and the prototype disagree about how a screen looks or behaves, the prototype wins, and this plan is updated to match.</div>
+
+<nav class="toc">
+<ol>
+  <li><a href="#product">What we're building</a></li>
+  <li><a href="#rules">Rules for Claude</a></li>
+  <li><a href="#stack">Stack and hosting</a></li>
+  <li><a href="#structure">Folder structure</a></li>
+  <li><a href="#model">Data model</a></li>
+  <li><a href="#api">Backend API</a></li>
+  <li><a href="#flow">Screens and features</a></li>
+  <li><a href="#logic">Planning logic</a></li>
+  <li><a href="#sync">Calendar sync format</a></li>
+  <li><a href="#security">Security</a></li>
+  <li><a href="#edge">Errors and edge cases</a></li>
+  <li><a href="#design">Design guidelines</a></li>
+  <li><a href="#phases">Phases</a></li>
+  <li><a href="#done">Definition of done</a></li>
+</ol>
+</nav>
+
+<h2 id="product">1. What we're building</h2>
+<p>A web app that pulls a student's classes and assignments from Canvas (and from syllabus text), lets them fix anything, plans weekly study time per class, and syncs everything to Google Calendar (Outlook later) with reminders. A short AI summary says what matters today and this week. Free, built for the BYU-Idaho hackathon.</p>
+<ul>
+  <li><strong>Everything is editable.</strong> Items, dates, class names, class times, study times.</li>
+  <li><strong>Study time is per class.</strong> The student sets weekly study times for each class (no shared study time). Each block shows what that class has due, and the student stars the assignments they'll work on in that block.</li>
+  <li><strong>The synced calendar explains itself.</strong> Study events say what to study for in their notes; emoji in titles tell study, class, and due date apart.</li>
+  <li><strong>Nothing is silently lost.</strong> Deletes go to Recently deleted for 1 day; study time changes need Confirm.</li>
+</ul>
+<p><strong>Out of scope:</strong> payments, native apps, drag-and-drop on the calendar (removed in the prototype on purpose), lecture recording, group features.</p>
+
+<h2 id="rules">2. Rules for Claude</h2>
+<div class="rule">
+<ol>
+  <li>Match the prototype. Copy, layout, states, and behavior come from it.</li>
+  <li>One source of truth for types: <code>frontend/src/types/</code> (TypeScript) mirrored by <code>backend/app/schemas.py</code> (Pydantic). Change both together.</li>
+  <li>Components never call <code>fetch</code> or Supabase directly. Components use hooks; hooks use <code>src/services/</code>.</li>
+  <li>Validate at every boundary: zod in the browser, Pydantic in FastAPI.</li>
+  <li>Secrets live only in the backend. Nothing secret gets a <code>VITE_</code> prefix.</li>
+  <li>Pure logic (study-block expansion, show filter, sync event building) lives in <code>src/lib/</code> or <code>backend/app/</code> pure functions with tests.</li>
+  <li>TypeScript strict, no <code>any</code>. Small files (about 150 lines max for components).</li>
+  <li>Every async action has loading, empty, and error states.</li>
+  <li>Don't add libraries beyond the stack list without asking Yujin.</li>
+  <li>Work one phase at a time and run the checks in section 14 before moving on.</li>
+</ol>
+</div>
+
+<h2 id="stack">3. Stack and hosting</h2>
+<div class="table-scroll"><table>
+<tr><th>Concern</th><th>Choice</th><th>Notes</th></tr>
+<tr><td>Frontend</td><td>Vite + React 18 + TypeScript (strict)</td><td></td></tr>
+<tr><td>Routing</td><td>React Router</td><td>Screens: Add classes, Review, Study time, Calendar, Reminders and sync, Recently deleted</td></tr>
+<tr><td>Server data</td><td>TanStack Query</td><td>Caching, loading and error states</td></tr>
+<tr><td>Local UI state</td><td>Zustand</td><td>View, filters, Show menu, drafts</td></tr>
+<tr><td>Styling</td><td>Tailwind CSS + CSS-variable tokens copied from the prototype</td><td>Dark theme first; backgrounds "Original" and "Sky clouds"</td></tr>
+<tr><td>Calendar</td><td>Custom Month / Week / Day views (no FullCalendar)</td><td>Matches the prototype; no drag</td></tr>
+<tr><td>Dates</td><td>date-fns</td><td></td></tr>
+<tr><td>Validation</td><td>zod / Pydantic</td><td></td></tr>
+<tr><td>Auth + database</td><td>Supabase (Google sign-in, Postgres with row-level security)</td><td></td></tr>
+<tr><td>Backend</td><td>FastAPI (Python)</td><td>Canvas, Google Calendar, Gemini; holds all secrets</td></tr>
+<tr><td>AI</td><td>Gemini API free tier (<code>gemini-2.5-flash</code>, set by env)</td><td>Summary and syllabus parsing; JSON-schema output</td></tr>
+<tr><td>Hosting</td><td>Vercel, one project with Services: <code>frontend/</code> at <code>/</code>, <code>backend/</code> at <code>/api</code></td><td>Local dev: Vite on 5173 proxies <code>/api</code> to uvicorn on 8000</td></tr>
+<tr><td>Tests</td><td>Vitest (frontend), pytest (backend)</td><td></td></tr>
+</table></div>
+
+<h2 id="structure">4. Folder structure</h2>
+<pre><code>BYUI mini hackathon/
+  vercel.json            Vercel Services + routing
+  .env.example           every variable, with notes
+  supabase/migrations/   SQL schema + row-level security
+  backend/
+    main.py              entrypoint (main:app)
+    app/                 config, auth, db, crypto, canvas, google_cal, gemini, ratelimit, routes/
+    tests/
+  frontend/
+    src/
+      app/               App, router, providers
+      pages/             one file per screen
+      components/        calendar/, study/, review/, sync/, ui/
+      hooks/             useCourses, useItems, useStudyTimes, useSync, useSummary
+      services/          api.ts (FastAPI), db.ts (Supabase), mock/
+      lib/               pure logic + tests
+      types/             domain.ts
+      styles/            tokens.css (from the prototype)</code></pre>
+
+<h2 id="model">5. Data model</h2>
+<p>Tables are in <code>supabase/migrations/001_init.sql</code>. Every table has row-level security: a user only sees their own rows.</p>
+<div class="table-scroll"><table>
+<tr><th>Table</th><th>Holds</th></tr>
+<tr><td>courses</td><td>code, name (editable), color, credits, hours per week (credits × 2.5), online (yes / no / unanswered), in-person meetings <code>[{day, start, end}]</code>, confirmed</td></tr>
+<tr><td>items</td><td>title, type (assignment, quiz, exam, project, reading, other), due date and time, status (todo / done), source, confidence, soft-delete time, Google event id</td></tr>
+<tr><td>study_times</td><td>per class: weekday, start, end (weekly, repeating)</td></tr>
+<tr><td>block_links</td><td>"studying for": one study block occurrence (<code>date|start</code>) linked to an item</td></tr>
+<tr><td>reminder_rules</td><td>minutes-before offsets per item type</td></tr>
+<tr><td>connections</td><td>encrypted Canvas token or feed URL, encrypted Google refresh token, Google calendar id. Backend only.</td></tr>
+<tr><td>ai_usage</td><td>daily AI call count per user. Backend only.</td></tr>
+</table></div>
+<p>An item is <em>done</em> if the student marked it done, otherwise if its due date is before today. A link to a done item stops showing (it comes back if the item is marked not done).</p>
+
+<h2 id="api">6. Backend API</h2>
+<p>All routes need <code>Authorization: Bearer &lt;Supabase access token&gt;</code>.</p>
+<div class="table-scroll"><table>
+<tr><th>Route</th><th>Does</th></tr>
+<tr><td><code>GET /api/health</code></td><td>Config check (no secrets returned)</td></tr>
+<tr><td><code>GET /api/me</code></td><td>Who is signed in, which connections exist</td></tr>
+<tr><td><code>POST /api/canvas/connect</code></td><td>Save a Canvas access token (checked against Canvas first) or a calendar feed URL, encrypted</td></tr>
+<tr><td><code>POST /api/canvas/import</code></td><td>Pull active courses and assignments (token) or feed events (URL) into courses and items</td></tr>
+<tr><td><code>POST /api/syllabus/parse</code></td><td>Gemini reads syllabus text (Canvas syllabus page or pasted PDF text) and returns class times, credits, and items with confidence</td></tr>
+<tr><td><code>POST /api/google/link</code></td><td>Store the Google refresh token captured at sign-in, encrypted</td></tr>
+<tr><td><code>POST /api/google/sync</code></td><td>Create or update events in a separate "Syllabus Planner" Google calendar; removes events that no longer exist</td></tr>
+<tr><td><code>POST /api/summary</code></td><td>Gemini summary for today or this week from item titles and dates only; daily limit per user</td></tr>
+</table></div>
+
+<h2 id="flow">7. Screens and features (from the prototype)</h2>
+<h3>Sidebar</h3>
+<p>Fixed to the window height; it does not stretch or scroll with the page. Buttons: Add classes, Review items, Study time, Calendar, Reminders and sync, Recently deleted, and the background picker (Original, Sky clouds) at the bottom. Hover labels.</p>
+<h3>Add classes</h3>
+<p>Connect Canvas (access token first, calendar feed URL as fallback) or upload syllabus PDFs. Each uploaded syllabus can be deleted (asks first, goes to Recently deleted). All text on the Canvas card is high-contrast: white, bold, smaller sizes only.</p>
+<h3>Review items</h3>
+<p>Class tabs; editable table; class names editable; flagged rows for unclear items; delete asks first and goes to Recently deleted. Class times panel: in person (sessions with different times on different days) or online (then a "Set up study time" button). <strong>Confirm</strong> asks "Confirm CSE 280?" and then opens Study time for that class. A class's meeting times only appear on the calendar after it is confirmed.</p>
+<h3>Study time</h3>
+<p>Class tabs only (no shared study time). Per weekday rows with time windows; Add time; quick setups Mornings, Afternoons, Evenings, Clear (active one filled). Changes are drafts: each class has its own Confirm / Discard bar (Confirm asks "Confirm CSE 325 study time?" and stays on the page), tabs show "Unsaved", "Confirm all classes" appears when several changed, and leaving with unsaved changes asks Confirm and leave / Discard / Keep editing. Undo after confirming.</p>
+<h3>Calendar</h3>
+<ul>
+  <li>Day, Week, Month views; Ctrl/Cmd + scroll zooms; month navigation.</li>
+  <li>Filter bar: All classes plus one button per class. <strong>Show</strong> menu: To do (default), Everything, Done, No assignments, plus a Study time switch. Shows "+N hidden".</li>
+  <li>Due items appear at their due time with an alarm icon. Study blocks are filled in the class color with a book icon. In-person classes are outlined in the class color with a school icon. Key below the calendar.</li>
+  <li>Clicking a study block opens its card: "Studying for in this block" (starred items, removable), due on that day ("Nothing due today" when empty), and a week list with back/forward showing only days with something due. Check items done without closing. "Edit CSE 325 study time" jumps to that class's study time.</li>
+  <li>Side panel: compact expandable AI summary (Today / Week), then Overview (Day / Week / Month range; title, then done bar, then overdue count, which hide while expanded).</li>
+  <li>Item card: details, edit, mark done, delete (asks first).</li>
+</ul>
+<h3>Reminders and sync</h3>
+<p>Reminders by type; connect Google Calendar (Outlook later); Sync preview showing today and tomorrow exactly as the synced events will look; "Emoji in event titles" switch; AI summary schedule.</p>
+<h3>Recently deleted</h3>
+<p>Deleted items stay 1 day with Restore and Delete now (with undo).</p>
+
+<h2 id="logic">8. Planning logic</h2>
+<ul>
+  <li>Hours per week per class = credits × 2.5 by default (BYU-Idaho guideline: 2 to 3 hours per credit), editable. The study page compares set-aside time with this.</li>
+  <li>Study blocks are weekly per class: <code>{courseId, weekday, start, end}</code>. Occurrences are generated for each date; a block's key is <code>YYYY-MM-DD|start</code>.</li>
+  <li>A block's card lists that class's items due on that day and the selected week.</li>
+  <li>Show filter: To do = not done; Everything; Done; No assignments; study time on or off. Class buttons pick which classes.</li>
+</ul>
+
+<h2 id="sync">9. Calendar sync format</h2>
+<div class="table-scroll"><table>
+<tr><th>Kind</th><th>Title (emoji on)</th><th>When</th><th>Notes</th></tr>
+<tr><td>Study block</td><td>📚 Study: CSE 325</td><td>each occurrence, next 3 weeks</td><td>"Study for: U04 Blazor assignment (due Sat, Nov 7)" or a prompt to pick something</td></tr>
+<tr><td>Class</td><td>🏫 Class: CSE 280 Discrete Mathematics</td><td>weekly recurring until semester end</td><td>In-person class meeting</td></tr>
+<tr><td>Due date</td><td>⏰ Due: W08 Teaching Truth post</td><td>at the due time</td><td>Class, type, reminders from the user's rules</td></tr>
+<tr><td>Done item</td><td>✅ Done: W08 Teaching Truth post</td><td>at the due time</td><td>Kept as a record; reminders removed</td></tr>
+</table></div>
+<p>Events go into a separate "Syllabus Planner" Google calendar (scope <code>calendar.app.created</code>). Every event carries a hidden tag (<code>syllabusPlanner=1</code>) and its own key, so:</p>
+<ul>
+  <li><strong>Re-sync</strong> updates events in place: done items turn into ✅, edited study blocks and starred assignments update their notes, deleted items and removed study times disappear (upcoming events only; past ones are left alone).</li>
+  <li><strong>Remove everything</strong> deletes the Syllabus Planner calendar in one step. The student's own events are never touched.</li>
+  <li>Sync is one-way (app → calendar). The app is where students plan and check things off; their normal calendar is where they see it.</li>
+  <li>Sync uses the free Google Calendar API, no AI. Run it on demand from Reminders and sync, and automatically a few seconds after a change.</li>
+</ul>
+
+<h2 id="security">10. Security (demo level)</h2>
+<ul>
+  <li>Secrets only in backend env vars (Vercel settings); <code>.env</code> is git-ignored.</li>
+  <li>Every API route checks the Supabase access token; every table has row-level security.</li>
+  <li>Canvas tokens, feed URLs, and Google refresh tokens are encrypted (Fernet) and never sent back to the browser.</li>
+  <li>Canvas URLs must be HTTPS on <code>instructure.com</code> (blocks the server being used to fetch other sites).</li>
+  <li>AI calls are limited per user per day; inputs are size-capped; only titles and dates go to Gemini (free tier may use inputs to improve Google's products).</li>
+  <li>Syllabus HTML is sanitized before display. CORS allows only the app's own origins. Security headers set in <code>vercel.json</code>.</li>
+  <li>Google app stays in Testing mode with listed test users for the demo.</li>
+</ul>
+
+<h2 id="edge">11. Errors and edge cases</h2>
+<ul>
+  <li>BYU-I blocks student Canvas tokens → offer the calendar feed URL.</li>
+  <li>Canvas assignment with no due date → listed in Review as "No date", not synced.</li>
+  <li>Due date with no time → 11:59 PM.</li>
+  <li>Class with no meeting times → flagged in Review until marked online or given times.</li>
+  <li>Google token revoked → sync returns "Reconnect Google" and nothing is lost.</li>
+  <li>Sync partly fails → report counts; re-running doesn't duplicate.</li>
+  <li>AI daily limit reached → clear message; the app works without AI.</li>
+</ul>
+
+<h2 id="design">12. Design guidelines</h2>
+<p>Copy the prototype's tokens (dark theme, opaque gray cards, class colors c1–c3, warning colors), shapes (18 px cards, pill buttons), and animations (card-in, expand with clip, reduced motion respected). Class colors always come with an icon or label, never color alone. Plain sentence-case copy.</p>
+
+<h2 id="phases">13. Phases</h2>
+<div class="phase"><h3>Phase 1: Foundation (done in this commit)</h3>
+<p>Repo, Vercel Services config, Supabase schema with RLS, FastAPI with every integration route, frontend with Google sign-in, Canvas connect and import, items list, Google sync button, AI summary.</p>
+<p><strong>Done when:</strong> sign in with Google, import from Canvas, see items, push them to Google Calendar, get a summary.</p></div>
+<div class="phase"><h3>Phase 2: App shell and Review</h3><p>Sidebar, tokens, backgrounds, Review screen with editable items, class names, class times, Recently deleted.</p></div>
+<div class="phase"><h3>Phase 3: Calendar</h3><p>Month / Week / Day, Show menu, key, item card, study block card with starring, Overview, AI summary card.</p></div>
+<div class="phase"><h3>Phase 4: Study time</h3><p>Per-class weekly times, quick setups, drafts with Confirm, leave guard.</p></div>
+<div class="phase"><h3>Phase 5: Reminders and sync</h3><p>Reminder rules, Sync preview, emoji switch, full sync with study notes and class meetings.</p></div>
+<div class="phase"><h3>Phase 6: Polish and stretch</h3><p>Mobile pass, installable on phones (PWA), empty and error states, demo script; Outlook (Microsoft Graph) if time allows.</p></div>
+<div class="phase"><h3>After the hackathon</h3><p>Native mobile app (checking things off and reminders on the go), two-way sync, more schools' Canvas.</p></div>
+
+<h2 id="done">14. Definition of done (every change)</h2>
+<ul class="check">
+  <li><code>npm run typecheck</code>, <code>npm run test</code>, <code>npm run build</code> pass in <code>frontend/</code></li>
+  <li><code>pytest</code> passes in <code>backend/</code></li>
+  <li>Matches the prototype at desktop and phone width</li>
+  <li>Loading, empty, and error states exist for anything async</li>
+  <li>No secrets in the frontend; new tables have RLS</li>
+  <li>This plan is updated if behavior or the data model changed</li>
+</ul>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,11 @@
+@import "./tokens.css";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body { margin: 0; background: var(--bg); color: var(--text); font-family: Manrope, system-ui, sans-serif; }
+button, input, select { font-family: inherit; }
+:focus-visible { outline: 2px solid var(--c1); outline-offset: 2px; }
+@keyframes cardIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.anim-page { animation: cardIn .32s cubic-bezier(.2,.8,.2,1) backwards; }
+@media (prefers-reduced-motion: reduce) { .anim-page { animation: none; } }

@@ -1,0 +1,30 @@
+# Secrets: never commit these
+.env
+.env.*
+!.env.example
+!.env.demo
+
+# Node
+node_modules/
+frontend/dist/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Vercel
+.vercel/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.ruff_cache/
+
+# Your own syllabus PDFs in the project root (kept out of git)
+/*.pdf
