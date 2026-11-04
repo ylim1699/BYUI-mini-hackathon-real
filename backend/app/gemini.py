@@ -31,12 +31,12 @@ async def _generate(prompt: str, schema: type[BaseModel]) -> BaseModel:
     from google.genai import types
 
     client = genai.Client(api_key=s.gemini_api_key)
-    models = [m for m in (s.gemini_model, s.gemini_fallback_model) if m]
     last: Exception | None = None
     resp = None
-    # Busy (503) or rate-limited (429): wait and retry, then try the fallback model if one is set.
-    for model in models:
-        for wait in (0, 2, 5):
+    # Try each model in order. Busy (503/500): wait and retry the same model once more.
+    # Out of quota (429) or not available (404): go straight to the next model.
+    for model in s.gemini_models:
+        for wait in (0, 3):
             if wait:
                 await asyncio.sleep(wait)
             try:

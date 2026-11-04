@@ -26,7 +26,13 @@ class Settings(BaseSettings):
 
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.8-flash"
-    gemini_fallback_model: str = ""   # optional second model to try if the first is busy
+    # Backups, in order, if the main model is busy, out of free quota, or not available to this key
+    gemini_fallback_models: str = "gemini-3.6-flash,gemini-3.5-flash-lite"
+
+    @property
+    def gemini_models(self) -> list[str]:
+        out = [self.gemini_model] + [m.strip() for m in self.gemini_fallback_models.split(",")]
+        return list(dict.fromkeys(m for m in out if m))  # keep order, drop blanks and repeats
     ai_daily_limit: int = 20          # per browser session per day
     ai_global_daily_limit: int = 300  # whole site per day (protects the free quota)
 
