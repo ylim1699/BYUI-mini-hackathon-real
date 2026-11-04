@@ -12,7 +12,11 @@ from .errors import AppError
 
 def _headers(extra: dict[str, str] | None = None) -> dict[str, str]:
     key = get_settings().supabase_service_role_key
-    h = {"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    h = {"apikey": key, "Content-Type": "application/json"}
+    # Legacy service_role keys are JWTs and go in Authorization too. New "sb_secret_..." keys
+    # aren't JWTs: they go only in the apikey header and Supabase handles the rest.
+    if key.startswith("eyJ"):
+        h["Authorization"] = f"Bearer {key}"
     if extra:
         h.update(extra)
     return h
