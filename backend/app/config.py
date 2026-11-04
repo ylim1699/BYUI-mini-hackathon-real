@@ -55,7 +55,14 @@ class Settings(BaseSettings):
             "SUPABASE_SERVICE_ROLE_KEY": self.supabase_service_role_key,
             "ENCRYPTION_KEY": self.encryption_key,
         }
-        return [k for k, v in required.items() if not v]
+        out = [k for k, v in required.items() if not v]
+        if self.encryption_key:
+            try:
+                from cryptography.fernet import Fernet
+                Fernet(self.encryption_key.encode())
+            except Exception:
+                out.append("ENCRYPTION_KEY (not a valid key: generate one with the command in .env.example)")
+        return out
 
 
 @lru_cache
